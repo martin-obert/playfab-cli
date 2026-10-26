@@ -21,10 +21,11 @@ public sealed class LeaderboardSchema
 
     public static LeaderboardSchema LoadFromFile(string path)
     {
-        if (!File.Exists(path))
-            throw new FileNotFoundException($"Schema file not found: {path}");
+        var ap = Path.GetFullPath(path);
+        if (!File.Exists(ap))
+            throw new FileNotFoundException($"Schema file not found: {ap}");
 
-        var json = File.ReadAllText(path);
+        var json = File.ReadAllText(ap);
         return JsonSerializer.Deserialize<LeaderboardSchema>(json, JsonOptions)
                ?? throw new InvalidOperationException("Failed to deserialize schema file.");
     }
