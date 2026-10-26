@@ -3,6 +3,7 @@ using System.Text.Json.Serialization;
 
 namespace PlayFab.Cli.Models;
 
+/// <summary>Local schema defining statistics and leaderboards to sync with PlayFab.</summary>
 public sealed class LeaderboardSchema
 {
     [JsonPropertyName("statistics")]
@@ -19,6 +20,7 @@ public sealed class LeaderboardSchema
         AllowTrailingCommas = true,
     };
 
+    /// <summary>Deserializes a schema from a JSON file on disk.</summary>
     public static LeaderboardSchema LoadFromFile(string path)
     {
         var ap = Path.GetFullPath(path);
@@ -30,6 +32,7 @@ public sealed class LeaderboardSchema
                ?? throw new InvalidOperationException("Failed to deserialize schema file.");
     }
 
+    /// <summary>Returns validation errors, or empty list if schema is valid.</summary>
     public List<string> Validate()
     {
         var errors = new List<string>();
@@ -109,6 +112,7 @@ public sealed class LeaderboardSchema
     }
 }
 
+/// <summary>A single statistic definition in the local schema.</summary>
 public sealed class StatisticConfig
 {
     [JsonPropertyName("name")]
@@ -126,6 +130,7 @@ public sealed class StatisticConfig
     [JsonPropertyName("maxQueryableVersions")]
     public int MaxQueryableVersions { get; set; } = 1;
 
+    /// <summary>Returns explicit columns, or a default "Value" column using top-level aggregation.</summary>
     public List<StatisticColumnConfig> GetEffectiveColumns()
     {
         if (Columns.Count > 0)
@@ -135,6 +140,7 @@ public sealed class StatisticConfig
     }
 }
 
+/// <summary>A column within a multi-column statistic.</summary>
 public sealed class StatisticColumnConfig
 {
     [JsonPropertyName("name")]
@@ -144,6 +150,7 @@ public sealed class StatisticColumnConfig
     public AggregationMethod AggregationMethod { get; set; } = AggregationMethod.Last;
 }
 
+/// <summary>A single leaderboard definition in the local schema.</summary>
 public sealed class LeaderboardConfig
 {
     [JsonPropertyName("name")]
@@ -162,6 +169,7 @@ public sealed class LeaderboardConfig
     public int MaxQueryableVersions { get; set; } = 1;
 }
 
+/// <summary>A ranked column in a leaderboard, optionally linked to a statistic.</summary>
 public sealed class LeaderboardColumnConfig
 {
     [JsonPropertyName("name")]

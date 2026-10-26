@@ -17,9 +17,6 @@
     <PackageReference Include="PlayFabAllSDK" Version="1.*" />
     <PackageReference Include="Spectre.Console" Version="0.*" />
     <PackageReference Include="Spectre.Console.Json" Version="0.*" />
-    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.*" />
-    <PackageReference Include="Microsoft.Extensions.Configuration.Json" Version="10.*" />
-    <PackageReference Include="Microsoft.Extensions.Configuration.EnvironmentVariables" Version="10.*" />
   </ItemGroup>
 
 </Project>

@@ -5,8 +5,10 @@ using PlayFab;
 
 namespace PlayFab.Cli.Commands.TitleData;
 
+/// <summary>Commands for reading and writing PlayFab title data key-value pairs.</summary>
 public static class TitleDataCommands
 {
+    /// <summary>Registers the 'titledata' command group with get and set subcommands.</summary>
     public static Command CreateGroup(Option<string?> globalTitleId, Option<string?> globalSecretKey, Option<OutputFormat> outputOption)
     {
         var group = new Command("titledata", "Manage PlayFab title data");

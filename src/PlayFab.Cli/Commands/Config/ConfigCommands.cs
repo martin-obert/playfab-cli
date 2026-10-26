@@ -3,8 +3,10 @@ using PlayFab.Cli.Infrastructure;
 
 namespace PlayFab.Cli.Commands.Config;
 
+/// <summary>Commands for managing persisted CLI credentials.</summary>
 public static class ConfigCommands
 {
+    /// <summary>Registers the 'config' command group with set and show subcommands.</summary>
     public static Command CreateGroup(Option<string?> globalTitleId, Option<string?> globalSecretKey, Option<OutputFormat> outputOption)
     {
         var group = new Command("config", "Manage PlayFab CLI configuration");

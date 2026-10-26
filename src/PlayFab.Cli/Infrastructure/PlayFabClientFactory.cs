@@ -3,8 +3,10 @@ using PlayFab.AuthenticationModels;
 
 namespace PlayFab.Cli.Infrastructure;
 
+/// <summary>Sets up PlayFab SDK static settings and authenticates.</summary>
 public static class PlayFabClientFactory
 {
+    /// <summary>Applies TitleId and SecretKey to PlayFab static settings.</summary>
     public static void Configure(CliConfig config)
     {
         if (string.IsNullOrWhiteSpace(config.TitleId))
@@ -19,6 +21,7 @@ public static class PlayFabClientFactory
         PlayFabSettings.staticSettings.DeveloperSecretKey = config.SecretKey;
     }
 
+    /// <summary>Configures SDK and obtains an entity token for Progression API calls.</summary>
     public static async Task AuthenticateEntityAsync(CliConfig config)
     {
         Configure(config);

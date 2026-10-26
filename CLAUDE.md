@@ -41,9 +41,16 @@ To add a new command group: create `Commands/<Group>/<Group>Commands.cs` with a 
 
 All commands support `--output Json` (default, pipeable) and `--output Table` (Spectre.Console). `OutputHelper` centralizes both paths — use `WriteJson()` for structured data and `WriteTable()` for key-value displays.
 
+### Leaderboard Commands Structure
+
+The `Commands/Leaderboard/` directory is split into three files:
+- **`LeaderboardCommands.cs`** — command definitions only (list, validate, sync)
+- **`ProgressionApiClient.cs`** — paginated PlayFab Progression API wrappers + enum mappers
+- **`SyncEngine.cs`** — sync plan building, printing, and applying logic
+
 ### PlayFab SDK
 
-Uses `PlayFabAllSDK` with static settings (`PlayFabSettings.staticSettings`). `PlayFabClientFactory.Configure()` must be called before any API call. The SDK uses `PlayFab.AdminModels` / `PlayFab.ServerModels` namespaces — pick the right one based on the API being called.
+Uses `PlayFabAllSDK` with static settings (`PlayFabSettings.staticSettings`). `PlayFabClientFactory.Configure()` must be called before any Admin API call. Leaderboard commands use the **Progression API** (`PlayFabProgressionAPI`) which additionally requires entity token authentication via `PlayFabClientFactory.AuthenticateEntityAsync()`.
 
 ## Testing
 

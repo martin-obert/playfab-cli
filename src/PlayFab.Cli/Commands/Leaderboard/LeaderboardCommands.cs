@@ -1,16 +1,13 @@
 using System.CommandLine;
 using PlayFab.Cli.Infrastructure;
 using PlayFab.Cli.Models;
-using PlayFab.ProgressionModels;
-using PlayFab;
-using AggregationMethod = PlayFab.Cli.Models.AggregationMethod;
-using ResetInterval = PlayFab.Cli.Models.ResetInterval;
-using SortDirection = PlayFab.Cli.Models.SortDirection;
 
 namespace PlayFab.Cli.Commands.Leaderboard;
 
+/// <summary>Commands for managing PlayFab statistics and leaderboards via Progression API.</summary>
 public static class LeaderboardCommands
 {
+    /// <summary>Registers the 'leaderboard' command group with list, validate, and sync subcommands.</summary>
     public static Command CreateGroup(Option<string?> globalTitleId, Option<string?> globalSecretKey, Option<OutputFormat> outputOption)
     {
         var group = new Command("leaderboard", "Manage PlayFab statistics and leaderboards from a local schema file");
@@ -19,8 +16,6 @@ public static class LeaderboardCommands
         group.Add(CreateSyncCommand(globalTitleId, globalSecretKey, outputOption));
         return group;
     }
-
-    // ── list ──────────────────────────────────────────────────────────────
 
     private static Command CreateListCommand(Option<string?> globalTitleId, Option<string?> globalSecretKey, Option<OutputFormat> outputOption)
     {
@@ -34,8 +29,8 @@ public static class LeaderboardCommands
             await PlayFabClientFactory.AuthenticateEntityAsync(config);
 
             var output = parseResult.GetValue(outputOption);
-            var stats = await FetchAllStatisticDefinitions();
-            var leaderboards = await FetchAllLeaderboardDefinitions();
+            var stats = await ProgressionApiClient.FetchAllStatisticDefinitions();
+            var leaderboards = await ProgressionApiClient.FetchAllLeaderboardDefinitions();
 
             if (output == OutputFormat.Table)
             {
@@ -101,8 +96,6 @@ public static class LeaderboardCommands
         return command;
     }
 
-    // ── validate ──────────────────────────────────────────────────────────
-
     private static Command CreateValidateCommand()
     {
         var fileOption = new Option<string>("--file") { Description = "Path to schema JSON file", DefaultValueFactory = _ => "leaderboards.json" };
@@ -141,8 +134,6 @@ public static class LeaderboardCommands
 
         return command;
     }
-
-    // ── sync ──────────────────────────────────────────────────────────────
 
     private static Command CreateSyncCommand(Option<string?> globalTitleId, Option<string?> globalSecretKey, Option<OutputFormat> outputOption)
     {
@@ -189,14 +180,14 @@ public static class LeaderboardCommands
                 parseResult.GetValue(globalSecretKey));
             await PlayFabClientFactory.AuthenticateEntityAsync(config);
 
-            var remoteStats = await FetchAllStatisticDefinitions();
+            var remoteStats = await ProgressionApiClient.FetchAllStatisticDefinitions();
             var remoteStatLookup = remoteStats.ToDictionary(s => s.Name, StringComparer.OrdinalIgnoreCase);
 
-            var remoteLeaderboards = await FetchAllLeaderboardDefinitions();
+            var remoteLeaderboards = await ProgressionApiClient.FetchAllLeaderboardDefinitions();
             var remoteLbLookup = remoteLeaderboards.ToDictionary(lb => lb.Name, StringComparer.OrdinalIgnoreCase);
 
-            var localStats = FilterByName(schema.Statistics, s => s.Name, nameFilter);
-            var localLbs = FilterByName(schema.Leaderboards, lb => lb.Name, nameFilter);
+            var localStats = SyncEngine.FilterByName(schema.Statistics, s => s.Name, nameFilter);
+            var localLbs = SyncEngine.FilterByName(schema.Leaderboards, lb => lb.Name, nameFilter);
 
             if (nameFilter is not null && localStats.Count == 0 && localLbs.Count == 0)
             {
@@ -205,10 +196,10 @@ public static class LeaderboardCommands
                 return;
             }
 
-            var statPlan = BuildStatisticSyncPlan(localStats, remoteStatLookup);
-            var lbPlan = BuildLeaderboardSyncPlan(localLbs, remoteLbLookup);
+            var statPlan = SyncEngine.BuildStatisticSyncPlan(localStats, remoteStatLookup);
+            var lbPlan = SyncEngine.BuildLeaderboardSyncPlan(localLbs, remoteLbLookup);
 
-            PrintSyncPlan(statPlan, lbPlan, output);
+            SyncEngine.PrintSyncPlan(statPlan, lbPlan, output);
 
             var hasChanges = statPlan.Creates.Count + statPlan.Updates.Count + lbPlan.Creates.Count + lbPlan.Updates.Count > 0;
 
@@ -219,418 +210,10 @@ public static class LeaderboardCommands
                 return;
             }
 
-            await ApplyStatisticPlan(statPlan);
-            await ApplyLeaderboardPlan(lbPlan);
+            await SyncEngine.ApplyStatisticPlan(statPlan);
+            await SyncEngine.ApplyLeaderboardPlan(lbPlan);
         });
 
         return command;
-    }
-
-    // ── fetch helpers ─────────────────────────────────────────────────────
-
-    private static async Task<List<StatisticDefinition>> FetchAllStatisticDefinitions()
-    {
-        var all = new List<StatisticDefinition>();
-        string? skipToken = null;
-
-        do
-        {
-            var result = await PlayFabProgressionAPI.ListStatisticDefinitionsAsync(
-                new ListStatisticDefinitionsRequest { SkipToken = skipToken });
-
-            if (result.Error is not null)
-            {
-                Console.Error.WriteLine($"Error listing statistics: {result.Error.ErrorMessage}");
-                Environment.ExitCode = 1;
-                return all;
-            }
-
-            all.AddRange(result.Result.StatisticDefinitions ?? []);
-            skipToken = result.Result.SkipToken;
-        } while (!string.IsNullOrEmpty(skipToken));
-
-        return all;
-    }
-
-    private static async Task<List<LeaderboardDefinition>> FetchAllLeaderboardDefinitions()
-    {
-        var all = new List<LeaderboardDefinition>();
-        string? skipToken = null;
-
-        do
-        {
-            var result = await PlayFabProgressionAPI.ListLeaderboardDefinitionsAsync(
-                new ListLeaderboardDefinitionsRequest { SkipToken = skipToken });
-
-            if (result.Error is not null)
-            {
-                Console.Error.WriteLine($"Error listing leaderboards: {result.Error.ErrorMessage}");
-                Environment.ExitCode = 1;
-                return all;
-            }
-
-            all.AddRange(result.Result.LeaderboardDefinitions ?? []);
-            skipToken = result.Result.SkipToken;
-        } while (!string.IsNullOrEmpty(skipToken));
-
-        return all;
-    }
-
-    // ── sync plan builders ────────────────────────────────────────────────
-
-    private static List<T> FilterByName<T>(List<T> items, Func<T, string> getName, string? filter)
-    {
-        if (filter is null) return items;
-        return items.Where(i => getName(i).Equals(filter, StringComparison.OrdinalIgnoreCase)).ToList();
-    }
-
-    private static SyncPlan<StatisticConfig, StatisticDefinition> BuildStatisticSyncPlan(
-        List<StatisticConfig> localStats, Dictionary<string, StatisticDefinition> remoteLookup)
-    {
-        var plan = new SyncPlan<StatisticConfig, StatisticDefinition>();
-
-        foreach (var local in localStats)
-        {
-            if (!remoteLookup.TryGetValue(local.Name, out var remote))
-            {
-                plan.Creates.Add(local);
-                continue;
-            }
-
-            var changes = new List<string>();
-
-            var remoteReset = remote.VersionConfiguration?.ResetInterval.ToString() ?? "Manual";
-            if (!remoteReset.Equals(local.ResetInterval.ToString(), StringComparison.OrdinalIgnoreCase))
-                changes.Add($"resetInterval: {remoteReset} → {local.ResetInterval}");
-
-            var remoteMaxVersions = remote.VersionConfiguration?.MaxQueryableVersions ?? 1;
-            if (remoteMaxVersions != local.MaxQueryableVersions)
-                changes.Add($"maxQueryableVersions: {remoteMaxVersions} → {local.MaxQueryableVersions}");
-
-            var localCols = local.GetEffectiveColumns();
-            var remoteCols = remote.Columns ?? [];
-            if (localCols.Count != remoteCols.Count)
-            {
-                changes.Add($"columns: {remoteCols.Count} → {localCols.Count} (cannot update after creation)");
-            }
-            else
-            {
-                for (var i = 0; i < localCols.Count; i++)
-                {
-                    if (!localCols[i].Name.Equals(remoteCols[i].Name, StringComparison.OrdinalIgnoreCase)
-                        || !localCols[i].AggregationMethod.ToString().Equals(remoteCols[i].AggregationMethod.ToString(), StringComparison.OrdinalIgnoreCase))
-                        changes.Add($"column '{remoteCols[i].Name}' differs (cannot update after creation)");
-                }
-            }
-
-            if (changes.Count > 0)
-                plan.Updates.Add((local, remote, changes));
-            else
-                plan.Unchanged.Add(local.Name);
-        }
-
-        return plan;
-    }
-
-    private static SyncPlan<LeaderboardConfig, LeaderboardDefinition> BuildLeaderboardSyncPlan(
-        List<LeaderboardConfig> localLbs, Dictionary<string, LeaderboardDefinition> remoteLookup)
-    {
-        var plan = new SyncPlan<LeaderboardConfig, LeaderboardDefinition>();
-
-        foreach (var local in localLbs)
-        {
-            if (!remoteLookup.TryGetValue(local.Name, out var remote))
-            {
-                plan.Creates.Add(local);
-                continue;
-            }
-
-            var changes = new List<string>();
-
-            var remoteReset = remote.VersionConfiguration?.ResetInterval.ToString() ?? "Manual";
-            if (!remoteReset.Equals(local.ResetInterval.ToString(), StringComparison.OrdinalIgnoreCase))
-                changes.Add($"resetInterval: {remoteReset} → {local.ResetInterval}");
-
-            if (remote.SizeLimit != local.SizeLimit)
-                changes.Add($"sizeLimit: {remote.SizeLimit} → {local.SizeLimit}");
-
-            var remoteCols = remote.Columns ?? [];
-            if (local.Columns.Count != remoteCols.Count)
-            {
-                changes.Add($"columns: {remoteCols.Count} → {local.Columns.Count} (cannot update after creation)");
-            }
-            else
-            {
-                for (var i = 0; i < local.Columns.Count; i++)
-                {
-                    var lc = local.Columns[i];
-                    var rc = remoteCols[i];
-                    if (!lc.Name.Equals(rc.Name, StringComparison.OrdinalIgnoreCase)
-                        || !lc.SortDirection.ToString().Equals(rc.SortDirection.ToString(), StringComparison.OrdinalIgnoreCase))
-                        changes.Add($"column '{rc.Name}' differs (cannot update after creation)");
-                }
-            }
-
-            if (changes.Count > 0)
-                plan.Updates.Add((local, remote, changes));
-            else
-                plan.Unchanged.Add(local.Name);
-        }
-
-        return plan;
-    }
-
-    // ── output ────────────────────────────────────────────────────────────
-
-    private static void PrintSyncPlan(
-        SyncPlan<StatisticConfig, StatisticDefinition> statPlan,
-        SyncPlan<LeaderboardConfig, LeaderboardDefinition> lbPlan,
-        OutputFormat output)
-    {
-        if (output == OutputFormat.Json)
-        {
-            OutputHelper.WriteJson(new
-            {
-                statistics = new
-                {
-                    create = statPlan.Creates.Select(c => c.Name),
-                    update = statPlan.Updates.Select(u => new { name = u.Local.Name, changes = u.Changes }),
-                    unchanged = statPlan.Unchanged,
-                },
-                leaderboards = new
-                {
-                    create = lbPlan.Creates.Select(c => c.Name),
-                    update = lbPlan.Updates.Select(u => new { name = u.Local.Name, changes = u.Changes }),
-                    unchanged = lbPlan.Unchanged,
-                },
-            });
-            return;
-        }
-
-        PrintSection("Statistics", statPlan, s =>
-        {
-            var cols = string.Join(", ", s.GetEffectiveColumns().Select(c => $"{c.Name}({c.AggregationMethod})"));
-            return $"[{cols}] reset: {s.ResetInterval}";
-        });
-
-        PrintSection("Leaderboards", lbPlan, lb =>
-        {
-            var cols = string.Join(", ", lb.Columns.Select(c =>
-            {
-                var link = c.LinkedStatistic is not null ? $"→{c.LinkedStatistic}.{c.LinkedStatisticColumn}" : "";
-                return $"{c.Name}({c.SortDirection}){link}";
-            }));
-            return $"[{cols}] size: {lb.SizeLimit} reset: {lb.ResetInterval}";
-        });
-
-        var totalChanges = statPlan.Creates.Count + statPlan.Updates.Count + lbPlan.Creates.Count + lbPlan.Updates.Count;
-        if (totalChanges == 0)
-            Console.WriteLine("Everything is in sync.");
-    }
-
-    private static void PrintSection<TLocal, TRemote>(string label, SyncPlan<TLocal, TRemote> plan, Func<TLocal, string> describe)
-    {
-        if (plan.Creates.Count == 0 && plan.Updates.Count == 0 && plan.Unchanged.Count == 0)
-            return;
-
-        Console.WriteLine($"\n{label}:");
-
-        foreach (var c in plan.Creates)
-            Console.WriteLine($"  + {GetName(c)} {describe(c)}");
-
-        foreach (var (local, _, changes) in plan.Updates)
-        {
-            Console.WriteLine($"  ~ {GetName(local)}");
-            foreach (var change in changes)
-                Console.WriteLine($"      {change}");
-        }
-
-        foreach (var name in plan.Unchanged)
-            Console.WriteLine($"  = {name}");
-    }
-
-    private static string GetName<T>(T item) => item switch
-    {
-        StatisticConfig s => s.Name,
-        LeaderboardConfig lb => lb.Name,
-        _ => item?.ToString() ?? "",
-    };
-
-    // ── apply ─────────────────────────────────────────────────────────────
-
-    private static async Task ApplyStatisticPlan(SyncPlan<StatisticConfig, StatisticDefinition> plan)
-    {
-        foreach (var stat in plan.Creates)
-        {
-            var columns = stat.GetEffectiveColumns().Select(c => new StatisticColumn
-            {
-                Name = c.Name,
-                AggregationMethod = ToSdkStatAggregation(c.AggregationMethod),
-            }).ToList();
-
-            var result = await PlayFabProgressionAPI.CreateStatisticDefinitionAsync(
-                new CreateStatisticDefinitionRequest
-                {
-                    Name = stat.Name,
-                    Columns = columns,
-                    EntityType = "title_player_account",
-                    VersionConfiguration = new VersionConfiguration
-                    {
-                        MaxQueryableVersions = stat.MaxQueryableVersions,
-                        ResetInterval = ToSdkResetInterval(stat.ResetInterval),
-                    },
-                });
-
-            if (result.Error is not null)
-            {
-                Console.Error.WriteLine($"Failed to create statistic '{stat.Name}': {result.Error.ErrorMessage}");
-                Environment.ExitCode = 1;
-                return;
-            }
-
-            Console.WriteLine($"Created statistic: {stat.Name}");
-        }
-
-        foreach (var (local, _, changes) in plan.Updates)
-        {
-            if (changes.Any(c => c.Contains("cannot update")))
-            {
-                Console.Error.WriteLine($"Skipped statistic '{local.Name}': column changes require delete + recreate.");
-                continue;
-            }
-
-            var result = await PlayFabProgressionAPI.UpdateStatisticDefinitionAsync(
-                new UpdateStatisticDefinitionRequest
-                {
-                    Name = local.Name,
-                    VersionConfiguration = new VersionConfiguration
-                    {
-                        MaxQueryableVersions = local.MaxQueryableVersions,
-                        ResetInterval = ToSdkResetInterval(local.ResetInterval),
-                    },
-                });
-
-            if (result.Error is not null)
-            {
-                Console.Error.WriteLine($"Failed to update statistic '{local.Name}': {result.Error.ErrorMessage}");
-                Environment.ExitCode = 1;
-                return;
-            }
-
-            Console.WriteLine($"Updated statistic: {local.Name}");
-        }
-    }
-
-    private static async Task ApplyLeaderboardPlan(SyncPlan<LeaderboardConfig, LeaderboardDefinition> plan)
-    {
-        foreach (var lb in plan.Creates)
-        {
-            var columns = lb.Columns.Select(c =>
-            {
-                var col = new LeaderboardColumn
-                {
-                    Name = c.Name,
-                    SortDirection = ToSdkSortDirection(c.SortDirection),
-                };
-
-                if (c.LinkedStatistic is not null)
-                {
-                    col.LinkedStatisticColumn = new LinkedStatisticColumn
-                    {
-                        LinkedStatisticName = c.LinkedStatistic,
-                        LinkedStatisticColumnName = c.LinkedStatisticColumn!,
-                    };
-                }
-
-                return col;
-            }).ToList();
-
-            var result = await PlayFabProgressionAPI.CreateLeaderboardDefinitionAsync(
-                new CreateLeaderboardDefinitionRequest
-                {
-                    Name = lb.Name,
-                    Columns = columns,
-                    EntityType = "title_player_account",
-                    SizeLimit = lb.SizeLimit,
-                    VersionConfiguration = new VersionConfiguration
-                    {
-                        MaxQueryableVersions = lb.MaxQueryableVersions,
-                        ResetInterval = ToSdkResetInterval(lb.ResetInterval),
-                    },
-                });
-
-            if (result.Error is not null)
-            {
-                Console.Error.WriteLine($"Failed to create leaderboard '{lb.Name}': {result.Error.ErrorMessage}");
-                Environment.ExitCode = 1;
-                return;
-            }
-
-            Console.WriteLine($"Created leaderboard: {lb.Name}");
-        }
-
-        foreach (var (local, _, changes) in plan.Updates)
-        {
-            if (changes.Any(c => c.Contains("cannot update")))
-            {
-                Console.Error.WriteLine($"Skipped leaderboard '{local.Name}': column changes require delete + recreate.");
-                continue;
-            }
-
-            var result = await PlayFabProgressionAPI.UpdateLeaderboardDefinitionAsync(
-                new UpdateLeaderboardDefinitionRequest
-                {
-                    Name = local.Name,
-                    SizeLimit = local.SizeLimit,
-                    VersionConfiguration = new VersionConfiguration
-                    {
-                        MaxQueryableVersions = local.MaxQueryableVersions,
-                        ResetInterval = ToSdkResetInterval(local.ResetInterval),
-                    },
-                });
-
-            if (result.Error is not null)
-            {
-                Console.Error.WriteLine($"Failed to update leaderboard '{local.Name}': {result.Error.ErrorMessage}");
-                Environment.ExitCode = 1;
-                return;
-            }
-
-            Console.WriteLine($"Updated leaderboard: {local.Name}");
-        }
-    }
-
-    // ── enum mappers ──────────────────────────────────────────────────────
-
-    private static PlayFab.ProgressionModels.StatisticAggregationMethod ToSdkStatAggregation(AggregationMethod m) => m switch
-    {
-        AggregationMethod.Min => ProgressionModels.StatisticAggregationMethod.Min,
-        AggregationMethod.Max => ProgressionModels.StatisticAggregationMethod.Max,
-        AggregationMethod.Sum => ProgressionModels.StatisticAggregationMethod.Sum,
-        _ => ProgressionModels.StatisticAggregationMethod.Last,
-    };
-
-    private static PlayFab.ProgressionModels.ResetInterval ToSdkResetInterval(ResetInterval r) => r switch
-    {
-        ResetInterval.Hour => ProgressionModels.ResetInterval.Hour,
-        ResetInterval.Day => ProgressionModels.ResetInterval.Day,
-        ResetInterval.Week => ProgressionModels.ResetInterval.Week,
-        ResetInterval.Month => ProgressionModels.ResetInterval.Month,
-        _ => ProgressionModels.ResetInterval.Manual,
-    };
-
-    private static LeaderboardSortDirection ToSdkSortDirection(SortDirection d) => d switch
-    {
-        SortDirection.Ascending => LeaderboardSortDirection.Ascending,
-        _ => LeaderboardSortDirection.Descending,
-    };
-
-    // ── sync plan type ────────────────────────────────────────────────────
-
-    private sealed class SyncPlan<TLocal, TRemote>
-    {
-        public List<TLocal> Creates { get; } = [];
-        public List<(TLocal Local, TRemote Remote, List<string> Changes)> Updates { get; } = [];
-        public List<string> Unchanged { get; } = [];
     }
 }
