@@ -45,8 +45,23 @@ public sealed class LeaderboardSchema
             if (!names.Add(stat.Name))
                 errors.Add($"Duplicate statistic name: '{stat.Name}'.");
 
-            if (!Enum.IsDefined(stat.AggregationMethod))
+            if (stat.Columns.Count == 0 && !Enum.IsDefined(stat.AggregationMethod))
                 errors.Add($"'{stat.Name}': invalid aggregationMethod '{stat.AggregationMethod}'.");
+
+            if (stat.Columns.Count > 0)
+            {
+                var colNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                foreach (var col in stat.Columns)
+                {
+                    if (string.IsNullOrWhiteSpace(col.Name))
+                        errors.Add($"'{stat.Name}': a column has an empty name.");
+                    else if (!colNames.Add(col.Name))
+                        errors.Add($"'{stat.Name}': duplicate column name '{col.Name}'.");
+
+                    if (!Enum.IsDefined(col.AggregationMethod))
+                        errors.Add($"'{stat.Name}'.'{col.Name}': invalid aggregationMethod.");
+                }
+            }
 
             if (!Enum.IsDefined(stat.ResetInterval))
                 errors.Add($"'{stat.Name}': invalid resetInterval '{stat.ResetInterval}'.");
@@ -61,11 +76,37 @@ public sealed class StatisticConfig
     [JsonPropertyName("name")]
     public string Name { get; set; } = "";
 
+    /// <summary>
+    /// Shorthand for a single-column statistic. Ignored if Columns is set.
+    /// </summary>
     [JsonPropertyName("aggregationMethod")]
     public AggregationMethod AggregationMethod { get; set; } = AggregationMethod.Last;
 
+    [JsonPropertyName("columns")]
+    public List<ColumnConfig> Columns { get; set; } = [];
+
     [JsonPropertyName("resetInterval")]
-    public ResetInterval ResetInterval { get; set; } = ResetInterval.Never;
+    public ResetInterval ResetInterval { get; set; } = ResetInterval.Manual;
+
+    [JsonPropertyName("maxQueryableVersions")]
+    public int MaxQueryableVersions { get; set; } = 1;
+
+    public List<ColumnConfig> GetEffectiveColumns()
+    {
+        if (Columns.Count > 0)
+            return Columns;
+
+        return [new ColumnConfig { Name = "Value", AggregationMethod = AggregationMethod }];
+    }
+}
+
+public sealed class ColumnConfig
+{
+    [JsonPropertyName("name")]
+    public string Name { get; set; } = "";
+
+    [JsonPropertyName("aggregationMethod")]
+    public AggregationMethod AggregationMethod { get; set; } = AggregationMethod.Last;
 }
 
 [JsonConverter(typeof(JsonStringEnumConverter<AggregationMethod>))]
@@ -80,7 +121,7 @@ public enum AggregationMethod
 [JsonConverter(typeof(JsonStringEnumConverter<ResetInterval>))]
 public enum ResetInterval
 {
-    Never,
+    Manual,
     Hour,
     Day,
     Week,

@@ -12,7 +12,7 @@ public class LeaderboardSchemaTests
         {
             Statistics =
             [
-                new StatisticConfig { Name = "Score", AggregationMethod = AggregationMethod.Max, ResetInterval = ResetInterval.Never },
+                new StatisticConfig { Name = "Score", AggregationMethod = AggregationMethod.Max, ResetInterval = ResetInterval.Manual },
                 new StatisticConfig { Name = "Wins", AggregationMethod = AggregationMethod.Sum, ResetInterval = ResetInterval.Week },
             ]
         };

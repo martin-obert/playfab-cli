@@ -1,8 +1,10 @@
 using System.CommandLine;
 using PlayFab.Cli.Infrastructure;
 using PlayFab.Cli.Models;
-using PlayFab.AdminModels;
+using PlayFab.ProgressionModels;
 using PlayFab;
+using AggregationMethod = PlayFab.Cli.Models.AggregationMethod;
+using ResetInterval = PlayFab.Cli.Models.ResetInterval;
 
 namespace PlayFab.Cli.Commands.Leaderboard;
 
@@ -26,36 +28,36 @@ public static class LeaderboardCommands
             var config = CliConfig.Load().MergeWith(
                 parseResult.GetValue(globalTitleId),
                 parseResult.GetValue(globalSecretKey));
-            PlayFabClientFactory.Configure(config);
+            await PlayFabClientFactory.AuthenticateEntityAsync(config);
 
-            var result = await PlayFabAdminAPI.GetPlayerStatisticDefinitionsAsync(
-                new GetPlayerStatisticDefinitionsRequest());
-
-            if (result.Error is not null)
-            {
-                Console.Error.WriteLine($"Error: {result.Error.ErrorMessage}");
-                Environment.ExitCode = 1;
-                return;
-            }
-
-            var stats = result.Result.Statistics ?? [];
+            var stats = await FetchAllStatisticDefinitions();
             var output = parseResult.GetValue(outputOption);
 
             if (output == OutputFormat.Table)
             {
                 var rows = new Dictionary<string, string>();
                 foreach (var s in stats)
-                    rows[s.StatisticName] = $"{s.AggregationMethod} | reset: {s.VersionChangeInterval} | v{s.CurrentVersion}";
+                {
+                    var cols = string.Join(", ", (s.Columns ?? []).Select(c => $"{c.Name}({c.AggregationMethod})"));
+                    var reset = s.VersionConfiguration?.ResetInterval.ToString() ?? "Manual";
+                    rows[s.Name] = $"columns: [{cols}] | reset: {reset} | v{s.Version}";
+                }
                 OutputHelper.WriteTable($"Statistics ({stats.Count})", rows);
             }
             else
             {
                 OutputHelper.WriteJson(stats.Select(s => new
                 {
-                    name = s.StatisticName,
-                    aggregationMethod = s.AggregationMethod?.ToString(),
-                    resetInterval = s.VersionChangeInterval?.ToString(),
-                    version = s.CurrentVersion,
+                    name = s.Name,
+                    columns = (s.Columns ?? []).Select(c => new
+                    {
+                        name = c.Name,
+                        aggregationMethod = c.AggregationMethod.ToString(),
+                    }),
+                    resetInterval = s.VersionConfiguration?.ResetInterval.ToString() ?? "Manual",
+                    maxQueryableVersions = s.VersionConfiguration?.MaxQueryableVersions ?? 1,
+                    version = s.Version,
+                    entityType = s.EntityType,
                 }));
             }
         });
@@ -142,35 +144,24 @@ public static class LeaderboardCommands
                 return;
             }
 
-            var localStats = schema.Statistics.AsEnumerable();
-            if (nameFilter is not null)
+            var localStats = nameFilter is not null
+                ? schema.Statistics.Where(s => s.Name.Equals(nameFilter, StringComparison.OrdinalIgnoreCase)).ToList()
+                : schema.Statistics;
+
+            if (localStats.Count == 0)
             {
-                localStats = localStats.Where(s => s.Name.Equals(nameFilter, StringComparison.OrdinalIgnoreCase));
-                if (!localStats.Any())
-                {
-                    Console.Error.WriteLine($"Statistic '{nameFilter}' not found in schema file.");
-                    Environment.ExitCode = 1;
-                    return;
-                }
+                Console.Error.WriteLine($"Statistic '{nameFilter}' not found in schema file.");
+                Environment.ExitCode = 1;
+                return;
             }
 
             var config = CliConfig.Load().MergeWith(
                 parseResult.GetValue(globalTitleId),
                 parseResult.GetValue(globalSecretKey));
-            PlayFabClientFactory.Configure(config);
+            await PlayFabClientFactory.AuthenticateEntityAsync(config);
 
-            var remoteResult = await PlayFabAdminAPI.GetPlayerStatisticDefinitionsAsync(
-                new GetPlayerStatisticDefinitionsRequest());
-
-            if (remoteResult.Error is not null)
-            {
-                Console.Error.WriteLine($"Error fetching remote definitions: {remoteResult.Error.ErrorMessage}");
-                Environment.ExitCode = 1;
-                return;
-            }
-
-            var remoteLookup = (remoteResult.Result.Statistics ?? [])
-                .ToDictionary(s => s.StatisticName, StringComparer.OrdinalIgnoreCase);
+            var remoteStats = await FetchAllStatisticDefinitions();
+            var remoteLookup = remoteStats.ToDictionary(s => s.Name, StringComparer.OrdinalIgnoreCase);
 
             var plan = BuildSyncPlan(localStats, remoteLookup);
 
@@ -189,7 +180,31 @@ public static class LeaderboardCommands
         return command;
     }
 
-    private static SyncPlan BuildSyncPlan(IEnumerable<StatisticConfig> localStats, Dictionary<string, PlayerStatisticDefinition> remoteLookup)
+    private static async Task<List<StatisticDefinition>> FetchAllStatisticDefinitions()
+    {
+        var all = new List<StatisticDefinition>();
+        string? skipToken = null;
+
+        do
+        {
+            var result = await PlayFabProgressionAPI.ListStatisticDefinitionsAsync(
+                new ListStatisticDefinitionsRequest { SkipToken = skipToken });
+
+            if (result.Error is not null)
+            {
+                Console.Error.WriteLine($"Error: {result.Error.ErrorMessage}");
+                Environment.ExitCode = 1;
+                return all;
+            }
+
+            all.AddRange(result.Result.StatisticDefinitions ?? []);
+            skipToken = result.Result.SkipToken;
+        } while (!string.IsNullOrEmpty(skipToken));
+
+        return all;
+    }
+
+    private static SyncPlan BuildSyncPlan(IEnumerable<StatisticConfig> localStats, Dictionary<string, StatisticDefinition> remoteLookup)
     {
         var plan = new SyncPlan();
 
@@ -201,21 +216,49 @@ public static class LeaderboardCommands
                 continue;
             }
 
-            var remoteAgg = remote.AggregationMethod?.ToString() ?? "Last";
-            var remoteReset = remote.VersionChangeInterval?.ToString() ?? "Never";
-
-            if (!remoteAgg.Equals(local.AggregationMethod.ToString(), StringComparison.OrdinalIgnoreCase)
-                || !remoteReset.Equals(local.ResetInterval.ToString(), StringComparison.OrdinalIgnoreCase))
-            {
-                plan.Updates.Add((local, remote));
-            }
+            var changes = DetectChanges(local, remote);
+            if (changes.Count > 0)
+                plan.Updates.Add((local, remote, changes));
             else
-            {
                 plan.Unchanged.Add(local.Name);
-            }
         }
 
         return plan;
+    }
+
+    private static List<string> DetectChanges(StatisticConfig local, StatisticDefinition remote)
+    {
+        var changes = new List<string>();
+
+        var remoteReset = remote.VersionConfiguration?.ResetInterval.ToString() ?? "Manual";
+        if (!remoteReset.Equals(local.ResetInterval.ToString(), StringComparison.OrdinalIgnoreCase))
+            changes.Add($"resetInterval: {remoteReset} → {local.ResetInterval}");
+
+        var remoteMaxVersions = remote.VersionConfiguration?.MaxQueryableVersions ?? 1;
+        if (remoteMaxVersions != local.MaxQueryableVersions)
+            changes.Add($"maxQueryableVersions: {remoteMaxVersions} → {local.MaxQueryableVersions}");
+
+        var localCols = local.GetEffectiveColumns();
+        var remoteCols = remote.Columns ?? [];
+        if (localCols.Count != remoteCols.Count)
+        {
+            changes.Add($"columns: {remoteCols.Count} → {localCols.Count} (cannot update after creation)");
+        }
+        else
+        {
+            for (var i = 0; i < localCols.Count; i++)
+            {
+                var lc = localCols[i];
+                var rc = remoteCols[i];
+                if (!lc.Name.Equals(rc.Name, StringComparison.OrdinalIgnoreCase)
+                    || !lc.AggregationMethod.ToString().Equals(rc.AggregationMethod.ToString(), StringComparison.OrdinalIgnoreCase))
+                {
+                    changes.Add($"column '{rc.Name}' differs (cannot update after creation)");
+                }
+            }
+        }
+
+        return changes;
     }
 
     private static void PrintPlan(SyncPlan plan, OutputFormat output)
@@ -224,12 +267,8 @@ public static class LeaderboardCommands
         {
             OutputHelper.WriteJson(new
             {
-                create = plan.Creates.Select(c => c.Name),
-                update = plan.Updates.Select(u => new
-                {
-                    name = u.Local.Name,
-                    changes = FormatChanges(u.Local, u.Remote),
-                }),
+                create = plan.Creates.Select(c => new { name = c.Name, columns = c.GetEffectiveColumns().Select(col => $"{col.Name}({col.AggregationMethod})") }),
+                update = plan.Updates.Select(u => new { name = u.Local.Name, changes = u.Changes }),
                 unchanged = plan.Unchanged,
             });
             return;
@@ -239,16 +278,19 @@ public static class LeaderboardCommands
         {
             Console.WriteLine("CREATE:");
             foreach (var c in plan.Creates)
-                Console.WriteLine($"  + {c.Name} (aggregation: {c.AggregationMethod}, reset: {c.ResetInterval})");
+            {
+                var cols = string.Join(", ", c.GetEffectiveColumns().Select(col => $"{col.Name}({col.AggregationMethod})"));
+                Console.WriteLine($"  + {c.Name} [{cols}] reset: {c.ResetInterval}");
+            }
         }
 
         if (plan.Updates.Count > 0)
         {
             Console.WriteLine("UPDATE:");
-            foreach (var (local, remote) in plan.Updates)
+            foreach (var (local, _, changes) in plan.Updates)
             {
                 Console.WriteLine($"  ~ {local.Name}");
-                foreach (var change in FormatChanges(local, remote))
+                foreach (var change in changes)
                     Console.WriteLine($"      {change}");
             }
         }
@@ -264,31 +306,27 @@ public static class LeaderboardCommands
             Console.WriteLine("Everything is in sync.");
     }
 
-    private static List<string> FormatChanges(StatisticConfig local, PlayerStatisticDefinition remote)
-    {
-        var changes = new List<string>();
-        var remoteAgg = remote.AggregationMethod?.ToString() ?? "Last";
-        var remoteReset = remote.VersionChangeInterval?.ToString() ?? "Never";
-
-        if (!remoteAgg.Equals(local.AggregationMethod.ToString(), StringComparison.OrdinalIgnoreCase))
-            changes.Add($"aggregationMethod: {remoteAgg} → {local.AggregationMethod}");
-
-        if (!remoteReset.Equals(local.ResetInterval.ToString(), StringComparison.OrdinalIgnoreCase))
-            changes.Add($"resetInterval: {remoteReset} → {local.ResetInterval}");
-
-        return changes;
-    }
-
     private static async Task ApplyPlan(SyncPlan plan)
     {
         foreach (var stat in plan.Creates)
         {
-            var result = await PlayFabAdminAPI.CreatePlayerStatisticDefinitionAsync(
-                new CreatePlayerStatisticDefinitionRequest
+            var columns = stat.GetEffectiveColumns().Select(c => new StatisticColumn
+            {
+                Name = c.Name,
+                AggregationMethod = ToSdkAggregation(c.AggregationMethod),
+            }).ToList();
+
+            var result = await PlayFabProgressionAPI.CreateStatisticDefinitionAsync(
+                new CreateStatisticDefinitionRequest
                 {
-                    StatisticName = stat.Name,
-                    AggregationMethod = ToSdkAggregation(stat.AggregationMethod),
-                    VersionChangeInterval = ToSdkResetInterval(stat.ResetInterval),
+                    Name = stat.Name,
+                    Columns = columns,
+                    EntityType = "title_player_account",
+                    VersionConfiguration = new VersionConfiguration
+                    {
+                        MaxQueryableVersions = stat.MaxQueryableVersions,
+                        ResetInterval = ToSdkResetInterval(stat.ResetInterval),
+                    },
                 });
 
             if (result.Error is not null)
@@ -301,14 +339,24 @@ public static class LeaderboardCommands
             Console.WriteLine($"Created: {stat.Name}");
         }
 
-        foreach (var (local, _) in plan.Updates)
+        foreach (var (local, _, changes) in plan.Updates)
         {
-            var result = await PlayFabAdminAPI.UpdatePlayerStatisticDefinitionAsync(
-                new UpdatePlayerStatisticDefinitionRequest
+            var columnChanges = changes.Any(c => c.Contains("cannot update after creation"));
+            if (columnChanges)
+            {
+                Console.Error.WriteLine($"Skipped '{local.Name}': column changes require delete + recreate (not supported in sync).");
+                continue;
+            }
+
+            var result = await PlayFabProgressionAPI.UpdateStatisticDefinitionAsync(
+                new UpdateStatisticDefinitionRequest
                 {
-                    StatisticName = local.Name,
-                    AggregationMethod = ToSdkAggregation(local.AggregationMethod),
-                    VersionChangeInterval = ToSdkResetInterval(local.ResetInterval),
+                    Name = local.Name,
+                    VersionConfiguration = new VersionConfiguration
+                    {
+                        MaxQueryableVersions = local.MaxQueryableVersions,
+                        ResetInterval = ToSdkResetInterval(local.ResetInterval),
+                    },
                 });
 
             if (result.Error is not null)
@@ -322,29 +370,29 @@ public static class LeaderboardCommands
         }
     }
 
-    private static StatisticAggregationMethod ToSdkAggregation(AggregationMethod method) => method switch
+    private static PlayFab.ProgressionModels.StatisticAggregationMethod ToSdkAggregation(AggregationMethod method) => method switch
     {
-        AggregationMethod.Last => StatisticAggregationMethod.Last,
-        AggregationMethod.Min => StatisticAggregationMethod.Min,
-        AggregationMethod.Max => StatisticAggregationMethod.Max,
-        AggregationMethod.Sum => StatisticAggregationMethod.Sum,
-        _ => StatisticAggregationMethod.Last,
+        AggregationMethod.Last => PlayFab.ProgressionModels.StatisticAggregationMethod.Last,
+        AggregationMethod.Min => PlayFab.ProgressionModels.StatisticAggregationMethod.Min,
+        AggregationMethod.Max => PlayFab.ProgressionModels.StatisticAggregationMethod.Max,
+        AggregationMethod.Sum => PlayFab.ProgressionModels.StatisticAggregationMethod.Sum,
+        _ => PlayFab.ProgressionModels.StatisticAggregationMethod.Last,
     };
 
-    private static StatisticResetIntervalOption ToSdkResetInterval(ResetInterval interval) => interval switch
+    private static PlayFab.ProgressionModels.ResetInterval ToSdkResetInterval(ResetInterval interval) => interval switch
     {
-        ResetInterval.Never => StatisticResetIntervalOption.Never,
-        ResetInterval.Hour => StatisticResetIntervalOption.Hour,
-        ResetInterval.Day => StatisticResetIntervalOption.Day,
-        ResetInterval.Week => StatisticResetIntervalOption.Week,
-        ResetInterval.Month => StatisticResetIntervalOption.Month,
-        _ => StatisticResetIntervalOption.Never,
+        ResetInterval.Manual => PlayFab.ProgressionModels.ResetInterval.Manual,
+        ResetInterval.Hour => PlayFab.ProgressionModels.ResetInterval.Hour,
+        ResetInterval.Day => PlayFab.ProgressionModels.ResetInterval.Day,
+        ResetInterval.Week => PlayFab.ProgressionModels.ResetInterval.Week,
+        ResetInterval.Month => PlayFab.ProgressionModels.ResetInterval.Month,
+        _ => PlayFab.ProgressionModels.ResetInterval.Manual,
     };
 
     private sealed class SyncPlan
     {
         public List<StatisticConfig> Creates { get; } = [];
-        public List<(StatisticConfig Local, PlayerStatisticDefinition Remote)> Updates { get; } = [];
+        public List<(StatisticConfig Local, StatisticDefinition Remote, List<string> Changes)> Updates { get; } = [];
         public List<string> Unchanged { get; } = [];
     }
 }

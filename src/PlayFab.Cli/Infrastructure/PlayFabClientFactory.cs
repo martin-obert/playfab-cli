@@ -1,4 +1,5 @@
 using PlayFab;
+using PlayFab.AuthenticationModels;
 
 namespace PlayFab.Cli.Infrastructure;
 
@@ -16,5 +17,14 @@ public static class PlayFabClientFactory
 
         PlayFabSettings.staticSettings.TitleId = config.TitleId;
         PlayFabSettings.staticSettings.DeveloperSecretKey = config.SecretKey;
+    }
+
+    public static async Task AuthenticateEntityAsync(CliConfig config)
+    {
+        Configure(config);
+
+        var result = await PlayFabAuthenticationAPI.GetEntityTokenAsync(new GetEntityTokenRequest());
+        if (result.Error is not null)
+            throw new InvalidOperationException($"Entity authentication failed: {result.Error.ErrorMessage}");
     }
 }
