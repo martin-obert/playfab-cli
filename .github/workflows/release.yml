@@ -1,0 +1,92 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            rid: win-x64
+            artifact: playfab-win-x64.zip
+          - os: ubuntu-latest
+            rid: linux-x64
+            artifact: playfab-linux-x64.tar.gz
+          - os: macos-latest
+            rid: osx-x64
+            artifact: playfab-osx-x64.tar.gz
+          - os: macos-latest
+            rid: osx-arm64
+            artifact: playfab-osx-arm64.tar.gz
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Publish self-contained
+        run: >
+          dotnet publish src/PlayFab.Cli/PlayFab.Cli.csproj
+          -c Release
+          -r ${{ matrix.rid }}
+          --self-contained true
+          -p:PublishSingleFile=true
+          -p:IncludeNativeLibrariesForSelfExtract=true
+          -o publish
+
+      - name: Package (Windows)
+        if: matrix.rid == 'win-x64'
+        run: Compress-Archive -Path publish/* -DestinationPath ${{ matrix.artifact }}
+
+      - name: Package (Unix)
+        if: matrix.rid != 'win-x64'
+        run: tar -czf ${{ matrix.artifact }} -C publish .
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.rid }}
+          path: ${{ matrix.artifact }}
+
+  pack:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Pack NuGet tool
+        run: dotnet pack src/PlayFab.Cli/PlayFab.Cli.csproj -c Release -o artifacts
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nupkg
+          path: artifacts/*.nupkg
+
+  release:
+    needs: [build, pack]
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: release-assets/*

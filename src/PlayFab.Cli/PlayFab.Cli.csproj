@@ -10,7 +10,18 @@
     <PackageId>PlayFab.Cli</PackageId>
     <Version>0.1.0</Version>
     <Description>CLI tool for automating PlayFab operations</Description>
+    <Authors>martin-obert</Authors>
+    <PackageProjectUrl>https://github.com/martin-obert/playfab-cli</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/martin-obert/playfab-cli.git</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageTags>playfab;cli;gamedev;automation</PackageTags>
   </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="..\..\README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="System.CommandLine" Version="2.0.*" />
