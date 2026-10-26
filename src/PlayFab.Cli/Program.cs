@@ -1,5 +1,6 @@
 using System.CommandLine;
 using PlayFab.Cli.Commands.Config;
+using PlayFab.Cli.Commands.Leaderboard;
 using PlayFab.Cli.Commands.Policy;
 using PlayFab.Cli.Commands.TitleData;
 using PlayFab.Cli.Infrastructure;
@@ -13,6 +14,7 @@ rootCommand.Add(titleIdOption);
 rootCommand.Add(secretKeyOption);
 rootCommand.Add(outputOption);
 rootCommand.Add(ConfigCommands.CreateGroup(titleIdOption, secretKeyOption, outputOption));
+rootCommand.Add(LeaderboardCommands.CreateGroup(titleIdOption, secretKeyOption, outputOption));
 rootCommand.Add(PolicyCommands.CreateGroup(titleIdOption, secretKeyOption, outputOption));
 rootCommand.Add(TitleDataCommands.CreateGroup(titleIdOption, secretKeyOption, outputOption));
 
