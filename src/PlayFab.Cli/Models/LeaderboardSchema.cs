@@ -8,6 +8,9 @@ public sealed class LeaderboardSchema
     [JsonPropertyName("statistics")]
     public List<StatisticConfig> Statistics { get; set; } = [];
 
+    [JsonPropertyName("leaderboards")]
+    public List<LeaderboardConfig> Leaderboards { get; set; } = [];
+
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
@@ -30,10 +33,10 @@ public sealed class LeaderboardSchema
     {
         var errors = new List<string>();
 
-        if (Statistics.Count == 0)
-            errors.Add("Schema contains no statistics.");
+        if (Statistics.Count == 0 && Leaderboards.Count == 0)
+            errors.Add("Schema contains no statistics or leaderboards.");
 
-        var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var statNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var stat in Statistics)
         {
             if (string.IsNullOrWhiteSpace(stat.Name))
@@ -42,7 +45,7 @@ public sealed class LeaderboardSchema
                 continue;
             }
 
-            if (!names.Add(stat.Name))
+            if (!statNames.Add(stat.Name))
                 errors.Add($"Duplicate statistic name: '{stat.Name}'.");
 
             if (stat.Columns.Count == 0 && !Enum.IsDefined(stat.AggregationMethod))
@@ -67,6 +70,40 @@ public sealed class LeaderboardSchema
                 errors.Add($"'{stat.Name}': invalid resetInterval '{stat.ResetInterval}'.");
         }
 
+        var lbNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var lb in Leaderboards)
+        {
+            if (string.IsNullOrWhiteSpace(lb.Name))
+            {
+                errors.Add("A leaderboard has an empty or missing name.");
+                continue;
+            }
+
+            if (!lbNames.Add(lb.Name))
+                errors.Add($"Duplicate leaderboard name: '{lb.Name}'.");
+
+            if (lb.Columns.Count == 0)
+                errors.Add($"Leaderboard '{lb.Name}': must have at least one column.");
+
+            foreach (var col in lb.Columns)
+            {
+                if (string.IsNullOrWhiteSpace(col.Name))
+                    errors.Add($"Leaderboard '{lb.Name}': a column has an empty name.");
+
+                if (!Enum.IsDefined(col.SortDirection))
+                    errors.Add($"Leaderboard '{lb.Name}'.'{col.Name}': invalid sortDirection.");
+
+                if (!string.IsNullOrEmpty(col.LinkedStatistic) && string.IsNullOrEmpty(col.LinkedStatisticColumn))
+                    errors.Add($"Leaderboard '{lb.Name}'.'{col.Name}': linkedStatisticColumn is required when linkedStatistic is set.");
+
+                if (!string.IsNullOrEmpty(col.LinkedStatistic) && !statNames.Contains(col.LinkedStatistic))
+                    errors.Add($"Leaderboard '{lb.Name}'.'{col.Name}': linkedStatistic '{col.LinkedStatistic}' not found in statistics.");
+            }
+
+            if (!Enum.IsDefined(lb.ResetInterval))
+                errors.Add($"Leaderboard '{lb.Name}': invalid resetInterval '{lb.ResetInterval}'.");
+        }
+
         return errors;
     }
 }
@@ -76,14 +113,11 @@ public sealed class StatisticConfig
     [JsonPropertyName("name")]
     public string Name { get; set; } = "";
 
-    /// <summary>
-    /// Shorthand for a single-column statistic. Ignored if Columns is set.
-    /// </summary>
     [JsonPropertyName("aggregationMethod")]
     public AggregationMethod AggregationMethod { get; set; } = AggregationMethod.Last;
 
     [JsonPropertyName("columns")]
-    public List<ColumnConfig> Columns { get; set; } = [];
+    public List<StatisticColumnConfig> Columns { get; set; } = [];
 
     [JsonPropertyName("resetInterval")]
     public ResetInterval ResetInterval { get; set; } = ResetInterval.Manual;
@@ -91,16 +125,16 @@ public sealed class StatisticConfig
     [JsonPropertyName("maxQueryableVersions")]
     public int MaxQueryableVersions { get; set; } = 1;
 
-    public List<ColumnConfig> GetEffectiveColumns()
+    public List<StatisticColumnConfig> GetEffectiveColumns()
     {
         if (Columns.Count > 0)
             return Columns;
 
-        return [new ColumnConfig { Name = "Value", AggregationMethod = AggregationMethod }];
+        return [new StatisticColumnConfig { Name = "Value", AggregationMethod = AggregationMethod }];
     }
 }
 
-public sealed class ColumnConfig
+public sealed class StatisticColumnConfig
 {
     [JsonPropertyName("name")]
     public string Name { get; set; } = "";
@@ -109,21 +143,44 @@ public sealed class ColumnConfig
     public AggregationMethod AggregationMethod { get; set; } = AggregationMethod.Last;
 }
 
-[JsonConverter(typeof(JsonStringEnumConverter<AggregationMethod>))]
-public enum AggregationMethod
+public sealed class LeaderboardConfig
 {
-    Last,
-    Min,
-    Max,
-    Sum,
+    [JsonPropertyName("name")]
+    public string Name { get; set; } = "";
+
+    [JsonPropertyName("columns")]
+    public List<LeaderboardColumnConfig> Columns { get; set; } = [];
+
+    [JsonPropertyName("sizeLimit")]
+    public int SizeLimit { get; set; } = 1000;
+
+    [JsonPropertyName("resetInterval")]
+    public ResetInterval ResetInterval { get; set; } = ResetInterval.Manual;
+
+    [JsonPropertyName("maxQueryableVersions")]
+    public int MaxQueryableVersions { get; set; } = 1;
 }
 
-[JsonConverter(typeof(JsonStringEnumConverter<ResetInterval>))]
-public enum ResetInterval
+public sealed class LeaderboardColumnConfig
 {
-    Manual,
-    Hour,
-    Day,
-    Week,
-    Month,
+    [JsonPropertyName("name")]
+    public string Name { get; set; } = "";
+
+    [JsonPropertyName("sortDirection")]
+    public SortDirection SortDirection { get; set; } = SortDirection.Descending;
+
+    [JsonPropertyName("linkedStatistic")]
+    public string? LinkedStatistic { get; set; }
+
+    [JsonPropertyName("linkedStatisticColumn")]
+    public string? LinkedStatisticColumn { get; set; }
 }
+
+[JsonConverter(typeof(JsonStringEnumConverter<AggregationMethod>))]
+public enum AggregationMethod { Last, Min, Max, Sum }
+
+[JsonConverter(typeof(JsonStringEnumConverter<ResetInterval>))]
+public enum ResetInterval { Manual, Hour, Day, Week, Month }
+
+[JsonConverter(typeof(JsonStringEnumConverter<SortDirection>))]
+public enum SortDirection { Descending, Ascending }

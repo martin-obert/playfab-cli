@@ -21,12 +21,12 @@ public class LeaderboardSchemaTests
     }
 
     [Fact]
-    public void Validate_EmptyStatistics_ReturnsError()
+    public void Validate_EmptySchema_ReturnsError()
     {
-        var schema = new LeaderboardSchema { Statistics = [] };
+        var schema = new LeaderboardSchema { Statistics = [], Leaderboards = [] };
         var errors = schema.Validate();
         Assert.Single(errors);
-        Assert.Contains("no statistics", errors[0]);
+        Assert.Contains("no statistics or leaderboards", errors[0]);
     }
 
     [Fact]
