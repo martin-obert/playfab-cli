@@ -1,6 +1,7 @@
 using System.CommandLine;
 using PlayFab.Cli.Infrastructure;
 using PlayFab.Cli.Models;
+using PlayFab.ProgressionModels;
 
 namespace PlayFab.Cli.Commands.Leaderboard;
 
@@ -14,6 +15,7 @@ public static class LeaderboardCommands
         group.Add(CreateListCommand(globalTitleId, globalSecretKey, outputOption));
         group.Add(CreateValidateCommand());
         group.Add(CreateSyncCommand(globalTitleId, globalSecretKey, outputOption));
+        group.Add(CreateResetCommand(globalTitleId, globalSecretKey));
         return group;
     }
 
@@ -215,5 +217,143 @@ public static class LeaderboardCommands
         });
 
         return command;
+    }
+
+    private static Command CreateResetCommand(Option<string?> globalTitleId, Option<string?> globalSecretKey)
+    {
+        var nameOption = new Option<string>("--name") { Description = "Name of the statistic or leaderboard to reset", Required = true };
+        var typeOption = new Option<string?>("--type") { Description = "Disambiguate when a statistic and leaderboard share the same name: 'statistic' or 'leaderboard'" };
+        var versionOption = new Option<uint?>("--version") { Description = "Only reset if the current remote version matches this value; omit to reset whatever the latest version is" };
+        var applyOption = new Option<bool>("--apply") { Description = "Apply the reset (default is dry-run)", DefaultValueFactory = _ => false };
+
+        var command = new Command("reset", "Manually reset a statistic or leaderboard by incrementing its version");
+        command.Add(nameOption);
+        command.Add(typeOption);
+        command.Add(versionOption);
+        command.Add(applyOption);
+
+        command.SetAction(async parseResult =>
+        {
+            var name = parseResult.GetRequiredValue(nameOption);
+            var typeFilter = parseResult.GetValue(typeOption);
+            var expectedVersion = parseResult.GetValue(versionOption);
+            var apply = parseResult.GetValue(applyOption);
+
+            if (typeFilter is not null
+                && !typeFilter.Equals("statistic", StringComparison.OrdinalIgnoreCase)
+                && !typeFilter.Equals("leaderboard", StringComparison.OrdinalIgnoreCase))
+            {
+                Console.Error.WriteLine("--type must be 'statistic' or 'leaderboard'.");
+                Environment.ExitCode = 1;
+                return;
+            }
+
+            var config = CliConfig.Load().MergeWith(
+                parseResult.GetValue(globalTitleId),
+                parseResult.GetValue(globalSecretKey));
+            await PlayFabClientFactory.AuthenticateEntityAsync(config);
+
+            var stats = await ProgressionApiClient.FetchAllStatisticDefinitions();
+            var leaderboards = await ProgressionApiClient.FetchAllLeaderboardDefinitions();
+
+            var stat = typeFilter is null || typeFilter.Equals("statistic", StringComparison.OrdinalIgnoreCase)
+                ? stats.FirstOrDefault(s => s.Name.Equals(name, StringComparison.OrdinalIgnoreCase))
+                : null;
+            var lb = typeFilter is null || typeFilter.Equals("leaderboard", StringComparison.OrdinalIgnoreCase)
+                ? leaderboards.FirstOrDefault(l => l.Name.Equals(name, StringComparison.OrdinalIgnoreCase))
+                : null;
+
+            if (stat is null && lb is null)
+            {
+                Console.Error.WriteLine($"'{name}' not found among remote statistics or leaderboards.");
+                Environment.ExitCode = 1;
+                return;
+            }
+
+            if (stat is not null && lb is not null)
+            {
+                Console.Error.WriteLine($"'{name}' matches both a statistic and a leaderboard. Use --type statistic or --type leaderboard to disambiguate.");
+                Environment.ExitCode = 1;
+                return;
+            }
+
+            var currentVersion = stat?.Version ?? lb!.Version;
+            if (expectedVersion is not null && expectedVersion != currentVersion)
+            {
+                Console.Error.WriteLine($"Expected version {expectedVersion} but current version of '{name}' is {currentVersion}. Aborting.");
+                Environment.ExitCode = 1;
+                return;
+            }
+
+            if (lb is not null)
+            {
+                var linkedStatNames = (lb.Columns ?? [])
+                    .Select(c => c.LinkedStatisticColumn?.LinkedStatisticName)
+                    .Where(n => n is not null)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+
+                if (linkedStatNames.Count > 0)
+                {
+                    Console.WriteLine($"Leaderboard '{lb.Name}' is linked to statistic '{string.Join(", ", linkedStatNames)}'.");
+                    Console.WriteLine("PlayFab only allows resetting the underlying statistic directly — doing so also resets this leaderboard.");
+
+                    foreach (var statName in linkedStatNames)
+                    {
+                        var linkedStat = stats.FirstOrDefault(s => s.Name.Equals(statName, StringComparison.OrdinalIgnoreCase));
+                        if (linkedStat is null)
+                        {
+                            Console.Error.WriteLine($"Linked statistic '{statName}' not found remotely; cannot reset.");
+                            Environment.ExitCode = 1;
+                            continue;
+                        }
+
+                        await ResetStatistic(linkedStat, apply);
+                    }
+
+                    return;
+                }
+
+                await ResetLeaderboard(lb, apply);
+                return;
+            }
+
+            await ResetStatistic(stat!, apply);
+        });
+
+        return command;
+    }
+
+    private static async Task ResetStatistic(StatisticDefinition stat, bool apply)
+    {
+        var linked = stat.LinkedLeaderboardNames ?? [];
+        var linkedNote = linked.Count > 0 ? $" (also resets linked leaderboard(s): {string.Join(", ", linked)})" : "";
+
+        if (!apply)
+        {
+            Console.WriteLine($"Would reset statistic '{stat.Name}' (version {stat.Version} → {stat.Version + 1}){linkedNote}.");
+            Console.WriteLine("Run with --apply to perform the reset.");
+            return;
+        }
+
+        var newVersion = await ProgressionApiClient.IncrementStatisticVersion(stat.Name);
+        if (newVersion is null) return;
+
+        Console.WriteLine($"Reset statistic '{stat.Name}' → version {newVersion}{linkedNote}.");
+    }
+
+    private static async Task ResetLeaderboard(LeaderboardDefinition lb, bool apply)
+    {
+        if (!apply)
+        {
+            Console.WriteLine($"Would reset leaderboard '{lb.Name}' (version {lb.Version} → {lb.Version + 1}).");
+            Console.WriteLine("Run with --apply to perform the reset.");
+            return;
+        }
+
+        var newVersion = await ProgressionApiClient.IncrementLeaderboardVersion(lb.Name);
+        if (newVersion is null) return;
+
+        Console.WriteLine($"Reset leaderboard '{lb.Name}' → version {newVersion}.");
     }
 }

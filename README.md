@@ -37,6 +37,7 @@ Credentials can also be set via environment variables (`PLAYFAB_TITLE_ID`, `PLAY
 | `leaderboard list` | List all statistic and leaderboard definitions |
 | `leaderboard validate` | Validate a local schema file |
 | `leaderboard sync` | Compare local schema with PlayFab, optionally apply |
+| `leaderboard reset` | Manually reset a statistic or leaderboard version |
 
 ### Title Data
 
@@ -83,6 +84,24 @@ playfab leaderboard sync --file leaderboards.json --name TotalScore --apply
 
 # List remote definitions
 playfab leaderboard list
+```
+
+### Manual Reset
+
+`resetInterval` in the schema only configures *automatic*, scheduled resets (`Hour`/`Day`/`Week`/`Month`). To reset a statistic or leaderboard on demand, use `reset` — it auto-detects whether `--name` refers to a statistic or a leaderboard, and resolves leaderboards that are linked to a statistic (PlayFab requires resetting the underlying statistic in that case, which cascades to the linked leaderboard). Dry-run by default — use `--apply` to perform it.
+
+```bash
+# Dry-run: see what would be reset
+playfab leaderboard reset --name TotalScore
+
+# Apply the reset
+playfab leaderboard reset --name TotalScore --apply
+
+# Disambiguate if a statistic and leaderboard share a name
+playfab leaderboard reset --name TotalScore --type leaderboard --apply
+
+# Safety check: only reset if the remote is still at the version you expect
+playfab leaderboard reset --name TotalScore --version 3 --apply
 ```
 
 ## Leaderboard Schema Format

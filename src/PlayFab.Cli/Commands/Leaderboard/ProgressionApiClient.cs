@@ -60,6 +60,36 @@ internal static class ProgressionApiClient
         return all;
     }
 
+    /// <summary>Increments a statistic's version, freezing the current version and starting a fresh one. Also resets any leaderboards linked to it.</summary>
+    public static async Task<uint?> IncrementStatisticVersion(string name)
+    {
+        var result = await PlayFabProgressionAPI.IncrementStatisticVersionAsync(new IncrementStatisticVersionRequest { Name = name });
+
+        if (result.Error is not null)
+        {
+            Console.Error.WriteLine($"Failed to reset statistic '{name}': {result.Error.ErrorMessage}");
+            Environment.ExitCode = 1;
+            return null;
+        }
+
+        return result.Result.Version;
+    }
+
+    /// <summary>Increments a standalone leaderboard's version, freezing the current version and starting a fresh one. Fails if the leaderboard is linked to a statistic.</summary>
+    public static async Task<uint?> IncrementLeaderboardVersion(string name)
+    {
+        var result = await PlayFabProgressionAPI.IncrementLeaderboardVersionAsync(new IncrementLeaderboardVersionRequest { Name = name });
+
+        if (result.Error is not null)
+        {
+            Console.Error.WriteLine($"Failed to reset leaderboard '{name}': {result.Error.ErrorMessage}");
+            Environment.ExitCode = 1;
+            return null;
+        }
+
+        return result.Result.Version;
+    }
+
     /// <summary>Maps local enum to SDK StatisticAggregationMethod.</summary>
     public static PlayFab.ProgressionModels.StatisticAggregationMethod ToSdkStatAggregation(AggregationMethod m) => m switch
     {
