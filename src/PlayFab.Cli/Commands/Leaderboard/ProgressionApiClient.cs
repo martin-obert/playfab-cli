@@ -60,6 +60,27 @@ internal static class ProgressionApiClient
         return all;
     }
 
+    /// <summary>Fetches a page of ranked entries for a leaderboard.</summary>
+    public static async Task<GetEntityLeaderboardResponse?> GetLeaderboard(string name, uint pageSize, uint? startingPosition, uint? version)
+    {
+        var result = await PlayFabProgressionAPI.GetLeaderboardAsync(new GetEntityLeaderboardRequest
+        {
+            LeaderboardName = name,
+            PageSize = pageSize,
+            StartingPosition = startingPosition,
+            Version = version,
+        });
+
+        if (result.Error is not null)
+        {
+            Console.Error.WriteLine($"Failed to get leaderboard '{name}': {result.Error.ErrorMessage}");
+            Environment.ExitCode = 1;
+            return null;
+        }
+
+        return result.Result;
+    }
+
     /// <summary>Increments a statistic's version, freezing the current version and starting a fresh one. Also resets any leaderboards linked to it.</summary>
     public static async Task<uint?> IncrementStatisticVersion(string name)
     {

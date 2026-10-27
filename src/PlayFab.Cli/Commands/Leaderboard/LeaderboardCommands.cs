@@ -13,6 +13,7 @@ public static class LeaderboardCommands
     {
         var group = new Command("leaderboard", "Manage PlayFab statistics and leaderboards from a local schema file");
         group.Add(CreateListCommand(globalTitleId, globalSecretKey, outputOption));
+        group.Add(CreateGetCommand(globalTitleId, globalSecretKey));
         group.Add(CreateValidateCommand());
         group.Add(CreateSyncCommand(globalTitleId, globalSecretKey, outputOption));
         group.Add(CreateResetCommand(globalTitleId, globalSecretKey));
@@ -94,6 +95,56 @@ public static class LeaderboardCommands
                     }),
                 });
             }
+        });
+
+        return command;
+    }
+
+    private static Command CreateGetCommand(Option<string?> globalTitleId, Option<string?> globalSecretKey)
+    {
+        var nameOption = new Option<string>("--name") { Description = "Name of the leaderboard to display", Required = true };
+        var versionOption = new Option<uint?>("--version") { Description = "Leaderboard version to read; omit for the current/live version" };
+        var pageSizeOption = new Option<uint>("--page-size") { Description = "Maximum number of ranked entries to return", DefaultValueFactory = _ => 100 };
+        var startingPositionOption = new Option<uint?>("--starting-position") { Description = "Zero-based rank to start reading from; omit to start at rank 0" };
+
+        var command = new Command("get", "Display the ranked entries of a leaderboard as JSON");
+        command.Add(nameOption);
+        command.Add(versionOption);
+        command.Add(pageSizeOption);
+        command.Add(startingPositionOption);
+
+        command.SetAction(async parseResult =>
+        {
+            var name = parseResult.GetRequiredValue(nameOption);
+            var version = parseResult.GetValue(versionOption);
+            var pageSize = parseResult.GetValue(pageSizeOption);
+            var startingPosition = parseResult.GetValue(startingPositionOption);
+
+            var config = CliConfig.Load().MergeWith(
+                parseResult.GetValue(globalTitleId),
+                parseResult.GetValue(globalSecretKey));
+            await PlayFabClientFactory.AuthenticateEntityAsync(config);
+
+            var leaderboard = await ProgressionApiClient.GetLeaderboard(name, pageSize, startingPosition, version);
+            if (leaderboard is null) return;
+
+            OutputHelper.WriteJson(new
+            {
+                name,
+                version = leaderboard.Version,
+                entryCount = leaderboard.EntryCount,
+                nextReset = leaderboard.NextReset,
+                columns = (leaderboard.Columns ?? []).Select(c => new { name = c.Name, sortDirection = c.SortDirection.ToString() }),
+                rankings = (leaderboard.Rankings ?? []).Select(r => new
+                {
+                    rank = r.Rank,
+                    displayName = r.DisplayName,
+                    entityId = r.Entity?.Id,
+                    scores = r.Scores,
+                    metadata = r.Metadata,
+                    lastUpdated = r.LastUpdated,
+                }),
+            });
         });
 
         return command;

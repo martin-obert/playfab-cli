@@ -35,6 +35,7 @@ Credentials can also be set via environment variables (`PLAYFAB_TITLE_ID`, `PLAY
 | `titledata set` | Set a title data key-value pair |
 | `policy get` | Get API policy statements |
 | `leaderboard list` | List all statistic and leaderboard definitions |
+| `leaderboard get` | Display the ranked entries of one leaderboard as JSON |
 | `leaderboard validate` | Validate a local schema file |
 | `leaderboard sync` | Compare local schema with PlayFab, optionally apply |
 | `leaderboard reset` | Manually reset a statistic or leaderboard version |
@@ -85,6 +86,21 @@ playfab leaderboard sync --file leaderboards.json --name TotalScore --apply
 
 # List remote definitions
 playfab leaderboard list
+```
+
+### Viewing Leaderboard Content
+
+`list` shows definitions only (columns, reset policy, version number) — `get` shows the actual ranked entries of one leaderboard, as JSON.
+
+```bash
+# Current/live rankings
+playfab leaderboard get --name TotalScore
+
+# A specific past version (if still within maxQueryableVersions)
+playfab leaderboard get --name TotalScore --version 3
+
+# Page through a large leaderboard
+playfab leaderboard get --name TotalScore --page-size 50 --starting-position 50
 ```
 
 ### Manual Reset
