@@ -38,6 +38,7 @@ Credentials can also be set via environment variables (`PLAYFAB_TITLE_ID`, `PLAY
 | `leaderboard validate` | Validate a local schema file |
 | `leaderboard sync` | Compare local schema with PlayFab, optionally apply |
 | `leaderboard reset` | Manually reset a statistic or leaderboard version |
+| `leaderboard seed` | Populate statistics/leaderboards with synthetic test data |
 
 ### Title Data
 
@@ -102,6 +103,26 @@ playfab leaderboard reset --name TotalScore --type leaderboard --apply
 
 # Safety check: only reset if the remote is still at the version you expect
 playfab leaderboard reset --name TotalScore --version 3 --apply
+```
+
+### Synthetic Data Seeding
+
+Populate statistics and leaderboards with test data using fake PlayFab accounts, useful for demos and testing without real players. Operates directly against remote definitions (no schema file needed). Fake accounts are created via `LoginWithServerCustomId` (secret-key only, no client login) and persisted locally at `~/.playfab/synthetic-accounts/{titleId}.json`, scoped per title — repeat runs reuse the same accounts and only create more if `--count` asks for more. Dry-run by default — use `--apply` to actually create accounts and push data.
+
+Leaderboards linked to a statistic (`linkedStatistic` in the schema) can't be written to directly — PlayFab requires pushing to the underlying statistic instead, which cascades into the linked leaderboard. `seed` detects this automatically, same as `reset`.
+
+```bash
+# Dry-run: see what would be seeded, with how many accounts
+playfab leaderboard seed
+
+# Apply: create accounts (if needed) and push synthetic values
+playfab leaderboard seed --apply
+
+# Seed only one statistic or leaderboard
+playfab leaderboard seed --name TotalScore --apply
+
+# Reproducible values, custom range and account count
+playfab leaderboard seed --count 200 --min 100 --max 5000 --seed 42 --apply
 ```
 
 ## Leaderboard Schema Format

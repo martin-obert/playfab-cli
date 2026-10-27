@@ -16,6 +16,7 @@ public static class LeaderboardCommands
         group.Add(CreateValidateCommand());
         group.Add(CreateSyncCommand(globalTitleId, globalSecretKey, outputOption));
         group.Add(CreateResetCommand(globalTitleId, globalSecretKey));
+        group.Add(CreateSeedCommand(globalTitleId, globalSecretKey));
         return group;
     }
 
@@ -355,5 +356,113 @@ public static class LeaderboardCommands
         if (newVersion is null) return;
 
         Console.WriteLine($"Reset leaderboard '{lb.Name}' → version {newVersion}.");
+    }
+
+    private static Command CreateSeedCommand(Option<string?> globalTitleId, Option<string?> globalSecretKey)
+    {
+        var nameOption = new Option<string?>("--name") { Description = "Seed only this statistic or leaderboard; omit to seed every remote statistic and leaderboard" };
+        var typeOption = new Option<string?>("--type") { Description = "Disambiguate when a statistic and leaderboard share the same name: 'statistic' or 'leaderboard'" };
+        var countOption = new Option<int>("--count") { Description = "Number of synthetic accounts to use (existing stored accounts are reused; a shortfall is created)", DefaultValueFactory = _ => 50 };
+        var minOption = new Option<long>("--min") { Description = "Minimum random value (inclusive) for generated scores", DefaultValueFactory = _ => 0 };
+        var maxOption = new Option<long>("--max") { Description = "Maximum random value (inclusive) for generated scores", DefaultValueFactory = _ => 10000 };
+        var seedOption = new Option<int?>("--seed") { Description = "Seed for the random number generator (omit for non-deterministic values)" };
+        var prefixOption = new Option<string>("--display-name-prefix") { Description = "Prefix for generated display names of newly created synthetic accounts", DefaultValueFactory = _ => "SeedPlayer" };
+        var batchSizeOption = new Option<int>("--batch-size") { Description = "Entries per API call when writing directly to a standalone leaderboard", DefaultValueFactory = _ => 100 };
+        var applyOption = new Option<bool>("--apply") { Description = "Apply changes: create accounts and push synthetic data (default is dry-run)", DefaultValueFactory = _ => false };
+
+        var command = new Command("seed", "Populate statistics and leaderboards with synthetic test data using fake accounts");
+        command.Add(nameOption);
+        command.Add(typeOption);
+        command.Add(countOption);
+        command.Add(minOption);
+        command.Add(maxOption);
+        command.Add(seedOption);
+        command.Add(prefixOption);
+        command.Add(batchSizeOption);
+        command.Add(applyOption);
+
+        command.SetAction(async parseResult =>
+        {
+            var name = parseResult.GetValue(nameOption);
+            var typeFilter = parseResult.GetValue(typeOption);
+            var count = parseResult.GetValue(countOption);
+            var min = parseResult.GetValue(minOption);
+            var max = parseResult.GetValue(maxOption);
+            var seed = parseResult.GetValue(seedOption);
+            var prefix = parseResult.GetRequiredValue(prefixOption);
+            var batchSize = parseResult.GetValue(batchSizeOption);
+            var apply = parseResult.GetValue(applyOption);
+
+            var validationErrors = SeedEngine.ValidateOptions(typeFilter, count, min, max, batchSize);
+            if (validationErrors.Count > 0)
+            {
+                foreach (var error in validationErrors)
+                    Console.Error.WriteLine($"  - {error}");
+                Environment.ExitCode = 1;
+                return;
+            }
+
+            var config = CliConfig.Load().MergeWith(
+                parseResult.GetValue(globalTitleId),
+                parseResult.GetValue(globalSecretKey));
+            await PlayFabClientFactory.AuthenticateEntityAsync(config);
+
+            var stats = await ProgressionApiClient.FetchAllStatisticDefinitions();
+            var leaderboards = await ProgressionApiClient.FetchAllLeaderboardDefinitions();
+
+            var (resolution, resolveError) = SeedEngine.ResolveTargets(stats, leaderboards, name, typeFilter);
+            if (resolveError is not null)
+            {
+                Console.Error.WriteLine(resolveError);
+                Environment.ExitCode = 1;
+                return;
+            }
+
+            if (resolution!.Statistics.Count == 0 && resolution.StandaloneLeaderboards.Count == 0)
+            {
+                Console.WriteLine("Nothing to seed.");
+                return;
+            }
+
+            var store = SyntheticAccountStore.Load(config.TitleId!);
+
+            if (!apply)
+            {
+                SeedEngine.PrintDryRunPlan(resolution, store.Count, count, min, max, batchSize);
+                return;
+            }
+
+            var shortfall = SeedEngine.CalculateShortfall(store.Count, count);
+            if (shortfall > 0)
+            {
+                Console.WriteLine($"Creating {shortfall} new synthetic account(s)...");
+                store = await SeedEngine.EnsureAccounts(store, count, prefix);
+                SyntheticAccountStore.Save(config.TitleId!, store);
+            }
+
+            var accountsToUse = store.Take(count).ToList();
+            if (accountsToUse.Count < count)
+                Console.Error.WriteLine($"Warning: only {accountsToUse.Count}/{count} accounts available; some account creations may have failed.");
+
+            var rng = seed.HasValue ? new Random(seed.Value) : new Random();
+
+            foreach (var stat in resolution.Statistics)
+            {
+                var (success, failed) = await SeedEngine.SeedStatistic(stat, accountsToUse, min, max, rng);
+                var note = failed > 0 ? $" ({failed} failed)" : "";
+                Console.WriteLine($"Seeded statistic '{stat.Name}': {success}/{success + failed} accounts updated{note}.");
+            }
+
+            foreach (var lb in resolution.StandaloneLeaderboards)
+            {
+                var (success, failed) = await SeedEngine.SeedLeaderboard(lb, accountsToUse, min, max, rng, batchSize);
+                var note = failed > 0 ? $" ({failed} failed)" : "";
+                Console.WriteLine($"Seeded leaderboard '{lb.Name}': {success}/{success + failed} entries written{note}.");
+            }
+
+            Console.WriteLine("Done.");
+        });
+
+        return command;
     }
 }

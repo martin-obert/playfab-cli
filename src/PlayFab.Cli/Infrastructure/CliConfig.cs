@@ -40,7 +40,7 @@ public sealed class CliConfig
                       ?? Environment.GetEnvironmentVariable("PLAYFAB_TITLE_ID")
                       ?? TitleId,
             SecretKey = secretKey
-                        ?? Environment.GetEnvironmentVariable("PLAYFAB_SECRET_KEY")
+                            ?? Environment.GetEnvironmentVariable("PLAYFAB_SECRET_KEY")
                         ?? SecretKey,
         };
     }

@@ -90,6 +90,44 @@ internal static class ProgressionApiClient
         return result.Result.Version;
     }
 
+    /// <summary>Pushes a single statistic value for one entity. Also feeds any leaderboard linked to this statistic.</summary>
+    public static async Task<bool> UpdateStatisticValue(EntityKey entity, string statisticName, List<string> scores)
+    {
+        var result = await PlayFabProgressionAPI.UpdateStatisticsAsync(new UpdateStatisticsRequest
+        {
+            Entity = entity,
+            Statistics = [new StatisticUpdate { Name = statisticName, Scores = scores }],
+        });
+
+        if (result.Error is not null)
+        {
+            Console.Error.WriteLine($"Failed to update statistic '{statisticName}' for entity '{entity.Id}': {result.Error.ErrorMessage}");
+            Environment.ExitCode = 1;
+            return false;
+        }
+
+        return true;
+    }
+
+    /// <summary>Pushes a batch of entries directly into a standalone (non-linked) leaderboard.</summary>
+    public static async Task<bool> UpdateLeaderboardEntriesBatch(string leaderboardName, List<LeaderboardEntryUpdate> entries)
+    {
+        var result = await PlayFabProgressionAPI.UpdateLeaderboardEntriesAsync(new UpdateLeaderboardEntriesRequest
+        {
+            LeaderboardName = leaderboardName,
+            Entries = entries,
+        });
+
+        if (result.Error is not null)
+        {
+            Console.Error.WriteLine($"Failed to update {entries.Count} entries for leaderboard '{leaderboardName}': {result.Error.ErrorMessage}");
+            Environment.ExitCode = 1;
+            return false;
+        }
+
+        return true;
+    }
+
     /// <summary>Maps local enum to SDK StatisticAggregationMethod.</summary>
     public static PlayFab.ProgressionModels.StatisticAggregationMethod ToSdkStatAggregation(AggregationMethod m) => m switch
     {
