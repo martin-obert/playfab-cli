@@ -265,6 +265,149 @@ public class MigrationLoaderTests : IDisposable
         Assert.Empty(errors);
     }
 
+    [Fact]
+    public void Validate_BatchDeleteKeys_Valid()
+    {
+        var path = WriteYaml("20261028120000_test.yml", """
+            description: "batch delete"
+            up:
+              - type: delete-title-data
+                keys:
+                  - KeyA
+                  - KeyB
+            down: []
+            """);
+        var migration = MigrationLoader.LoadSingle(path);
+
+        var errors = MigrationLoader.Validate(migration);
+
+        Assert.Empty(errors);
+    }
+
+    [Fact]
+    public void Validate_BatchSetValues_Valid()
+    {
+        var path = WriteYaml("20261028120000_test.yml", """
+            description: "batch set"
+            up:
+              - type: set-title-data
+                values:
+                  GameVersion: "1.0.0"
+                  MaxPlayers: "10"
+            down: []
+            """);
+        var migration = MigrationLoader.LoadSingle(path);
+
+        var errors = MigrationLoader.Validate(migration);
+
+        Assert.Empty(errors);
+    }
+
+    [Fact]
+    public void Validate_BatchKeysWithSetType_ReturnsError()
+    {
+        var path = WriteYaml("20261028120000_test.yml", """
+            description: "test"
+            up:
+              - type: set-title-data
+                keys:
+                  - KeyA
+            down: []
+            """);
+        var migration = MigrationLoader.LoadSingle(path);
+
+        var errors = MigrationLoader.Validate(migration);
+
+        Assert.Contains(errors, e => e.Contains("'keys' can only be used with delete"));
+    }
+
+    [Fact]
+    public void Validate_BatchValuesWithDeleteType_ReturnsError()
+    {
+        var path = WriteYaml("20261028120000_test.yml", """
+            description: "test"
+            up:
+              - type: delete-title-data
+                values:
+                  KeyA: V1
+            down: []
+            """);
+        var migration = MigrationLoader.LoadSingle(path);
+
+        var errors = MigrationLoader.Validate(migration);
+
+        Assert.Contains(errors, e => e.Contains("'values' can only be used with set"));
+    }
+
+    [Fact]
+    public void Validate_AmbiguousKeyAndKeys_ReturnsError()
+    {
+        var path = WriteYaml("20261028120000_test.yml", """
+            description: "test"
+            up:
+              - type: delete-title-data
+                key: KeyA
+                keys:
+                  - KeyB
+            down: []
+            """);
+        var migration = MigrationLoader.LoadSingle(path);
+
+        var errors = MigrationLoader.Validate(migration);
+
+        Assert.Contains(errors, e => e.Contains("Only one of"));
+    }
+
+    [Fact]
+    public void Validate_EmptyKeysList_ReturnsError()
+    {
+        var path = WriteYaml("20261028120000_test.yml", """
+            description: "test"
+            up:
+              - type: delete-title-data
+                keys: []
+            down: []
+            """);
+        var migration = MigrationLoader.LoadSingle(path);
+
+        var errors = MigrationLoader.Validate(migration);
+
+        Assert.Contains(errors, e => e.Contains("'keys' must not be empty"));
+    }
+
+    [Fact]
+    public void Validate_EmptyValuesDictionary_ReturnsError()
+    {
+        var path = WriteYaml("20261028120000_test.yml", """
+            description: "test"
+            up:
+              - type: set-title-data
+                values: {}
+            down: []
+            """);
+        var migration = MigrationLoader.LoadSingle(path);
+
+        var errors = MigrationLoader.Validate(migration);
+
+        Assert.Contains(errors, e => e.Contains("'values' must not be empty"));
+    }
+
+    [Fact]
+    public void Validate_NoKeyOrKeysOrValues_ReturnsError()
+    {
+        var path = WriteYaml("20261028120000_test.yml", """
+            description: "test"
+            up:
+              - type: set-title-data
+            down: []
+            """);
+        var migration = MigrationLoader.LoadSingle(path);
+
+        var errors = MigrationLoader.Validate(migration);
+
+        Assert.Contains(errors, e => e.Contains("Must specify"));
+    }
+
     private string WriteYaml(string filename, string content)
     {
         var path = Path.Combine(_tempDir, filename);

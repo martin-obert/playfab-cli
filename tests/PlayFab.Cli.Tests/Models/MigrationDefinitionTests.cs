@@ -96,6 +96,71 @@ public class MigrationDefinitionTests
     }
 
     [Fact]
+    public void Deserialize_BatchDeleteKeys_ParsesList()
+    {
+        var yaml = """
+            description: "batch delete"
+            up:
+              - type: delete-title-data
+                keys:
+                  - KeyA
+                  - KeyB
+            down: []
+            """;
+
+        var def = Deserializer.Deserialize<MigrationDefinition>(yaml);
+
+        Assert.Single(def.Up);
+        Assert.Null(def.Up[0].Key);
+        Assert.NotNull(def.Up[0].Keys);
+        Assert.Equal(2, def.Up[0].Keys!.Count);
+        Assert.Equal("KeyA", def.Up[0].Keys![0]);
+        Assert.Equal("KeyB", def.Up[0].Keys![1]);
+    }
+
+    [Fact]
+    public void Deserialize_BatchSetValues_ParsesDictionary()
+    {
+        var yaml = """
+            description: "batch set"
+            up:
+              - type: set-title-data
+                values:
+                  GameVersion: "1.0.0"
+                  MaxPlayers: "10"
+            down: []
+            """;
+
+        var def = Deserializer.Deserialize<MigrationDefinition>(yaml);
+
+        Assert.Single(def.Up);
+        Assert.Null(def.Up[0].Key);
+        Assert.NotNull(def.Up[0].Values);
+        Assert.Equal(2, def.Up[0].Values!.Count);
+        Assert.Equal("1.0.0", def.Up[0].Values!["GameVersion"]);
+        Assert.Equal("10", def.Up[0].Values!["MaxPlayers"]);
+    }
+
+    [Fact]
+    public void Deserialize_SingleKey_NoKeysOrValues()
+    {
+        var yaml = """
+            description: "single"
+            up:
+              - type: set-title-data
+                key: K
+                value: V
+            down: []
+            """;
+
+        var def = Deserializer.Deserialize<MigrationDefinition>(yaml);
+
+        Assert.Equal("K", def.Up[0].Key);
+        Assert.Null(def.Up[0].Keys);
+        Assert.Null(def.Up[0].Values);
+    }
+
+    [Fact]
     public void Deserialize_ExtraYamlFields_Ignored()
     {
         var yaml = """

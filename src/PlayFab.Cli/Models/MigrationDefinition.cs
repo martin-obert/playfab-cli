@@ -2,14 +2,16 @@ namespace PlayFab.Cli.Models;
 
 public sealed class MigrationDefinition
 {
-    public string Description { get; set; } = "";
-    public List<MigrationStep> Up { get; set; } = [];
-    public List<MigrationStep> Down { get; set; } = [];
+    public required string Description { get; init; }
+    public required List<MigrationStep> Up { get; init; }
+    public required List<MigrationStep> Down { get; init; }
 }
 
 public sealed class MigrationStep
 {
-    public string Type { get; set; } = "";
-    public string Key { get; set; } = "";
-    public string? Value { get; set; }
+    public required string Type { get; init; }
+    public string? Key { get; init; }
+    public string? Value { get; init; }
+    public List<string>? Keys { get; init; }
+    public Dictionary<string, string>? Values { get; init; }
 }

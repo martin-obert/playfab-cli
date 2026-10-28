@@ -22,7 +22,7 @@ public static class MigrationRunner
             }
             catch (Exception ex)
             {
-                return new MigrationRunResult(false, $"Step {stepsExecuted} ({step.Type} {step.Key}) failed: {ex.Message}", stepsExecuted);
+                return new MigrationRunResult(false, $"Step {stepsExecuted} ({step.Type} {StepTarget(step)}) failed: {ex.Message}", stepsExecuted);
             }
         }
 
@@ -50,7 +50,7 @@ public static class MigrationRunner
             }
             catch (Exception ex)
             {
-                return new MigrationRunResult(false, $"Step {stepsExecuted} ({step.Type} {step.Key}) failed: {ex.Message}", stepsExecuted);
+                return new MigrationRunResult(false, $"Step {stepsExecuted} ({step.Type} {StepTarget(step)}) failed: {ex.Message}", stepsExecuted);
             }
         }
 
@@ -68,21 +68,47 @@ public static class MigrationRunner
         if (!OperationTypes.Implemented.Contains(step.Type))
             throw new NotImplementedException($"Operation type '{step.Type}' is defined but not yet implemented.");
 
-        switch (step.Type)
+        if (step.Keys is not null)
+        {
+            foreach (var key in step.Keys)
+                await ExecuteSingleAsync(step.Type, key, null);
+        }
+        else if (step.Values is not null)
+        {
+            foreach (var kvp in step.Values)
+                await ExecuteSingleAsync(step.Type, kvp.Key, kvp.Value);
+        }
+        else
+        {
+            await ExecuteSingleAsync(step.Type, step.Key!, step.Value);
+        }
+    }
+
+    private static async Task ExecuteSingleAsync(string type, string key, string? value)
+    {
+        switch (type)
         {
             case OperationTypes.SetTitleData:
-                await SetTitleDataAsync(step.Key, step.Value);
+                await SetTitleDataAsync(key, value);
                 break;
             case OperationTypes.DeleteTitleData:
-                await SetTitleDataAsync(step.Key, null);
+                await SetTitleDataAsync(key, null);
                 break;
             case OperationTypes.SetTitleInternalData:
-                await SetTitleInternalDataAsync(step.Key, step.Value);
+                await SetTitleInternalDataAsync(key, value);
                 break;
             case OperationTypes.DeleteTitleInternalData:
-                await SetTitleInternalDataAsync(step.Key, null);
+                await SetTitleInternalDataAsync(key, null);
                 break;
         }
+    }
+
+    private static string StepTarget(MigrationStep step)
+    {
+        if (step.Key is not null) return step.Key;
+        if (step.Keys is not null) return $"[{string.Join(", ", step.Keys)}]";
+        if (step.Values is not null) return $"[{string.Join(", ", step.Values.Keys)}]";
+        return "?";
     }
 
     private static async Task SetTitleDataAsync(string key, string? value)
