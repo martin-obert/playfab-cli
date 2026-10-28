@@ -1,5 +1,6 @@
 using System.CommandLine;
 using PlayFab.Cli.Commands.Config;
+using PlayFab.Cli.Commands.Migrate;
 using PlayFab.Cli.Infrastructure;
 
 var titleIdOption = new Option<string?>("--title-id")
@@ -28,6 +29,7 @@ rootCommand.Add(titleIdOption);
 rootCommand.Add(secretKeyOption);
 rootCommand.Add(outputOption);
 rootCommand.Add(ConfigCommands.CreateGroup(globalOptions));
+rootCommand.Add(MigrateCommands.CreateGroup(globalOptions));
 
 var parseResult = rootCommand.Parse(args);
 return await parseResult.InvokeAsync();

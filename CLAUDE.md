@@ -16,11 +16,12 @@ Requires .NET 10 SDK.
 
 ## Architecture
 
-An infrastructure-as-code CLI tool (`playfab`) that configures PlayFab titles from declarative configuration files (`playfab.title.json`). Packaged as a `dotnet tool` via NuGet. Targets `net10.0` with nullable enabled.
+A migration-based CLI tool (`playfab`) for configuring PlayFab titles, similar to database migrations (EF Core, Flyway). Packaged as a `dotnet tool` via NuGet. Targets `net10.0` with nullable enabled.
 
-There are two distinct configuration concepts:
-- **Credentials file** (`~/.playfab/config.json`) — stores PlayFab Title ID and Secret Key for authentication
-- **Title configuration file** (`playfab.title.json`) — declares the desired state of a PlayFab title (title data, statistics, leaderboards, policies). This is the infrastructure-as-code file that lives in your project directory.
+### Two Distinct Configuration Concepts
+
+- **Credentials file** (`~/.playfab/config.json`) — stores PlayFab Title ID and Secret Key
+- **Migration files** (`migrations/*.yml`) — YAML files defining up/down steps that modify a PlayFab title's configuration. The ledger of applied migrations is stored as PlayFab Title Internal Data under key `__playfab_cli_migrations`.
 
 ### CLI Framework: System.CommandLine 2.0 (stable)
 
@@ -35,7 +36,7 @@ The 2.0 stable API differs significantly from beta documentation found online:
 
 ### Command Pattern
 
-Commands follow `playfab <group> <verb>` (e.g., `playfab config show`). Each command group is a static class in `Commands/<Group>/<Group>Commands.cs` with:
+Commands follow `playfab <group> <verb>` (e.g., `playfab migrate up`). Each command group is a static class in `Commands/<Group>/<Group>Commands.cs` with:
 
 ```csharp
 public static Command CreateGroup(GlobalOptions globalOptions)
@@ -43,32 +44,39 @@ public static Command CreateGroup(GlobalOptions globalOptions)
 
 `GlobalOptions` is a record in `Infrastructure/GlobalOptions.cs` that bundles the three recursive options (`--title-id`, `--secret-key`, `--output`). To add a new command group: create the static class, then add one `rootCommand.Add()` call in `Program.cs`.
 
+### Migration System
+
+Migration files use YAML format with timestamp-prefixed filenames (`20261028120000_add_data.yml`). The ID is parsed from the filename. Each file has `description`, `up` (list of steps), and `down` (list of steps).
+
+**Operation types** — each step has a `type`, `key`, and optional `value`:
+- Implemented: `set-title-data`, `delete-title-data`, `set-title-internal-data`, `delete-title-internal-data`
+- Defined but not yet implemented: `create-statistic`, `delete-statistic`, `reset-statistic`, `create-leaderboard`, `delete-leaderboard`, `set-policy`
+
+Constants and sets live in `Models/OperationTypes.cs`. To add a new operation type: add the constant, add it to `All` (and `Implemented` when ready), then add the dispatch case in `MigrationRunner.ExecuteStepAsync`.
+
+**Key infrastructure classes:**
+- `MigrationLoader` — discovers, parses (YamlDotNet), and validates YAML files
+- `MigrationLedgerService` — reads/writes the ledger JSON from PlayFab Title Internal Data
+- `MigrationRunner` — executes up/down steps via PlayFab Admin API, updates ledger
+- `PlayFabAuth` — resolves credentials and configures `PlayFabSettings.staticSettings`
+
 ### Credential Resolution (`CredentialResolver`)
 
-Credentials resolve in priority order: CLI args → env vars (`PLAYFAB_TITLE_ID`, `PLAYFAB_SECRET_KEY`) → config file (`~/.playfab/config.json`). The `CredentialResolver.Resolve()` method implements this cascade and returns a `ResolvedCredentials` record. It accepts an optional `CliConfig` parameter for testability.
-
-### Title Configuration File (`playfab.title.json`)
-
-The `TitleConfiguration` model in `Models/TitleConfiguration.cs` defines the schema skeleton. Sections use `JsonNode?` types as placeholders — each section gets a proper typed model when its command group is implemented. Current sections: `titleData`, `titleInternalData`, `statistics`, `leaderboards`, `policies`.
-
-To add a new section: add a `JsonNode?` property to `TitleConfiguration`, then replace it with a typed model when the feature is ready.
-
-### Output
-
-All commands support `--output Json` (default, pipeable with Spectre syntax highlighting for interactive terminals) and `--output Table` (Spectre.Console). `OutputHelper` centralizes both paths.
+Priority: CLI args → env vars (`PLAYFAB_TITLE_ID`, `PLAYFAB_SECRET_KEY`) → config file (`~/.playfab/config.json`).
 
 ### Key Dependencies
 
 - `System.CommandLine` 2.0 — CLI parsing
-- `PlayFabAllSDK` — PlayFab Admin + Progression APIs
+- `PlayFabAllSDK` — PlayFab Admin APIs
 - `Spectre.Console` / `Spectre.Console.Json` — table and JSON output formatting
+- `YamlDotNet` — YAML migration file parsing
 - `xunit` — test framework
 
 ## Branch & CI
 
 - Main branch: `master` (squash-merge only, requires `build` status check)
-- Release tags (`v*`) trigger the GitHub Actions workflow that builds self-contained binaries (win-x64, linux-x64, osx-x64, osx-arm64) and a NuGet package, then creates a GitHub Release.
+- Release tags (`v*`) trigger GitHub Actions: self-contained binaries + NuGet package → GitHub Release.
 
 ## Testing
 
-Tests use xunit and mirror the src folder structure (`Commands/`, `Infrastructure/`, `Models/`). Tests that manipulate environment variables use `[Collection("Environment")]` for sequential execution. `CliConfig` tests use temp directories via the `configDirectory` parameter to avoid touching `~/.playfab/`. `CredentialResolver` tests pass explicit `CliConfig` instances to avoid reading real credentials.
+Tests use xunit and mirror the src folder structure (`Commands/`, `Infrastructure/`, `Models/`). Environment variable tests use `[Collection("Environment")]` for sequential execution. `CliConfig` tests use temp directories. `CredentialResolver` tests pass explicit `CliConfig` instances. `MigrationLoader` tests use temp directories with YAML files. Runner and LedgerService are not unit-tested (they make PlayFab API calls).
