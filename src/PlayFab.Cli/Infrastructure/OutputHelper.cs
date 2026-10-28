@@ -4,7 +4,6 @@ using Spectre.Console.Json;
 
 namespace PlayFab.Cli.Infrastructure;
 
-/// <summary>Writes structured output as JSON or Spectre.Console tables.</summary>
 public static class OutputHelper
 {
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -13,7 +12,6 @@ public static class OutputHelper
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
     };
 
-    /// <summary>Serializes to JSON; syntax-highlighted when interactive, plain when piped.</summary>
     public static void WriteJson(object value)
     {
         var json = JsonSerializer.Serialize(value, JsonOptions);
@@ -29,7 +27,6 @@ public static class OutputHelper
         }
     }
 
-    /// <summary>Renders a key-value dictionary as a Spectre.Console rounded table.</summary>
     public static void WriteTable(string title, IDictionary<string, string> data)
     {
         var table = new Table().Title(title).Border(TableBorder.Rounded);

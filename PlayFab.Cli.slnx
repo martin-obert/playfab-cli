@@ -1,8 +1,4 @@
 <Solution>
-  <Folder Name="/src/">
-    <Project Path="src/PlayFab.Cli/PlayFab.Cli.csproj" />
-  </Folder>
-  <Folder Name="/tests/">
-    <Project Path="tests/PlayFab.Cli.Tests/PlayFab.Cli.Tests.csproj" />
-  </Folder>
+  <Project Path="src/PlayFab.Cli/PlayFab.Cli.csproj" />
+  <Project Path="tests/PlayFab.Cli.Tests/PlayFab.Cli.Tests.csproj" />
 </Solution>
