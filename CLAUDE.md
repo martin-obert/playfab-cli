@@ -48,16 +48,37 @@ public static Command CreateGroup(GlobalOptions globalOptions)
 
 Migration files use YAML format with timestamp-prefixed filenames (`20261028120000_add_data.yml`). The ID is parsed from the filename. Each file has `description`, `up` (list of steps), and `down` (list of steps).
 
-**Operation types** — each step has a `type`, `key`, and optional `value`:
+**Step syntax** — three forms, mutually exclusive per step:
+
+```yaml
+# Single key (set operations require value, delete operations forbid it):
+- type: set-title-data
+  key: GameVersion
+  value: "1.0.0"
+
+# Batch set — values dictionary (set-* operations only):
+- type: set-title-data
+  values:
+    GameVersion: "1.0.0"
+    MatchmakingConfig: '{"maxPlayers": 10}'
+
+# Batch delete — keys list (delete-* operations only):
+- type: delete-title-data
+  keys:
+    - GameVersion
+    - MatchmakingConfig
+```
+
+**Operation types:**
 - Implemented: `set-title-data`, `delete-title-data`, `set-title-internal-data`, `delete-title-internal-data`
 - Defined but not yet implemented: `create-statistic`, `delete-statistic`, `reset-statistic`, `create-leaderboard`, `delete-leaderboard`, `set-policy`
 
-Constants and sets live in `Models/OperationTypes.cs`. To add a new operation type: add the constant, add it to `All` (and `Implemented` when ready), then add the dispatch case in `MigrationRunner.ExecuteStepAsync`.
+Constants and sets live in `Models/OperationTypes.cs`. To add a new operation type: add the constant, add it to `All` (and `Implemented` when ready), then add the dispatch case in `MigrationRunner.ExecuteSingleAsync`.
 
 **Key infrastructure classes:**
-- `MigrationLoader` — discovers, parses (YamlDotNet), and validates YAML files
+- `MigrationLoader` — discovers, parses (YamlDotNet), and validates YAML files (including batch form validation)
 - `MigrationLedgerService` — reads/writes the ledger JSON from PlayFab Title Internal Data
-- `MigrationRunner` — executes up/down steps via PlayFab Admin API, updates ledger
+- `MigrationRunner` — executes up/down steps via PlayFab Admin API (expands batch steps into individual API calls), updates ledger
 - `PlayFabAuth` — resolves credentials and configures `PlayFabSettings.staticSettings`
 
 ### Credential Resolution (`CredentialResolver`)
