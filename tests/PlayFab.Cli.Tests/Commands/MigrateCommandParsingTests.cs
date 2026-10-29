@@ -116,9 +116,16 @@ public class MigrateCommandParsingTests
     }
 
     [Fact]
+    public void MigratePlanStatistics_ParsesStatisticNameOption()
+    {
+        var result = _rootCommand.Parse("migrate plan statistics --statistic PlayerScore");
+        Assert.Empty(result.Errors);
+    }
+
+    [Fact]
     public void MigratePlanStatistics_ParsesAllFlags()
     {
-        var result = _rootCommand.Parse("migrate plan statistics --include-deletes --allow-recreate --statistics-dir stats");
+        var result = _rootCommand.Parse("migrate plan statistics --include-deletes --allow-recreate --statistics-dir stats --statistic PlayerScore");
         Assert.Empty(result.Errors);
     }
 

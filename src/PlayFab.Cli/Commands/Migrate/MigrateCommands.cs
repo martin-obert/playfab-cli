@@ -254,6 +254,10 @@ public static class MigrateCommands
             Description = "Path to statistic definitions directory",
             DefaultValueFactory = _ => "statistics",
         };
+        var statisticNameOption = new Option<string?>("--statistic")
+        {
+            Description = "Reconcile only this statistic (by name). When omitted, reconciles all.",
+        };
         var includeDeletesOption = new Option<bool>("--include-deletes")
         {
             Description = "Generate delete-statistic steps for statistics on PlayFab with no local definition",
@@ -265,6 +269,7 @@ public static class MigrateCommands
 
         var command = new Command("statistics", "Reconcile local statistic definition files against PlayFab");
         command.Add(statisticsDirOption);
+        command.Add(statisticNameOption);
         command.Add(includeDeletesOption);
         command.Add(allowRecreateOption);
 
@@ -274,10 +279,16 @@ public static class MigrateCommands
             var secretKey = parseResult.GetValue(globalOptions.SecretKey);
             var migrationsDir = parseResult.GetValue(migrationsDirOption)!;
             var statisticsDir = parseResult.GetValue(statisticsDirOption)!;
+            var statisticName = parseResult.GetValue(statisticNameOption);
             var includeDeletes = parseResult.GetValue(includeDeletesOption);
             var allowRecreate = parseResult.GetValue(allowRecreateOption);
 
             var localDefinitions = StatisticDefinitionStore.LoadAll(statisticsDir);
+
+            if (statisticName is not null)
+                localDefinitions = localDefinitions
+                    .Where(d => string.Equals(d.Name, statisticName, StringComparison.OrdinalIgnoreCase))
+                    .ToList();
 
             var validationErrors = new List<string>();
             foreach (var def in localDefinitions)
@@ -307,6 +318,11 @@ public static class MigrateCommands
                 Console.Error.WriteLine(ex.Message);
                 return;
             }
+
+            if (statisticName is not null)
+                remoteDefinitions = remoteDefinitions
+                    .Where(d => string.Equals(d.Name, statisticName, StringComparison.OrdinalIgnoreCase))
+                    .ToList();
 
             var options = new ReconcileOptions(includeDeletes, allowRecreate);
             var result = StatisticReconciler.Reconcile(localDefinitions, remoteDefinitions, options);
