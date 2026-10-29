@@ -301,6 +301,21 @@ public static partial class MigrationLoader
 
                 if (!ValidSortDirections.Contains(col.SortDirection))
                     errors.Add($"{prefix}: leaderboardColumns[{j}] has invalid sortDirection '{col.SortDirection}'.");
+
+                var hasLinkedStatistic = col.LinkedStatistic is not null;
+                var hasLinkedStatisticColumn = col.LinkedStatisticColumn is not null;
+
+                if (hasLinkedStatistic != hasLinkedStatisticColumn)
+                {
+                    errors.Add($"{prefix}: leaderboardColumns[{j}] 'linkedStatistic' and 'linkedStatisticColumn' must both be set or both be omitted.");
+                }
+                else if (hasLinkedStatistic)
+                {
+                    if (string.IsNullOrWhiteSpace(col.LinkedStatistic))
+                        errors.Add($"{prefix}: leaderboardColumns[{j}] linkedStatistic must not be empty.");
+                    if (string.IsNullOrWhiteSpace(col.LinkedStatisticColumn))
+                        errors.Add($"{prefix}: leaderboardColumns[{j}] linkedStatisticColumn must not be empty.");
+                }
             }
         }
 

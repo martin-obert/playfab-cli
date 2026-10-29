@@ -182,10 +182,24 @@ public static class MigrationRunner
 
     private static async Task CreateLeaderboardDefinitionAsync(MigrationStep step)
     {
-        var columns = step.LeaderboardColumns!.Select(c => new LeaderboardColumn
+        var columns = step.LeaderboardColumns!.Select(c =>
         {
-            Name = c.Name,
-            SortDirection = ParseSortDirection(c.SortDirection),
+            var column = new LeaderboardColumn
+            {
+                Name = c.Name,
+                SortDirection = ParseSortDirection(c.SortDirection),
+            };
+
+            if (c.LinkedStatistic is not null)
+            {
+                column.LinkedStatisticColumn = new LinkedStatisticColumn
+                {
+                    LinkedStatisticName = c.LinkedStatistic,
+                    LinkedStatisticColumnName = c.LinkedStatisticColumn!,
+                };
+            }
+
+            return column;
         }).ToList();
 
         var result = await PlayFabProgressionAPI.CreateLeaderboardDefinitionAsync(new CreateLeaderboardDefinitionRequest

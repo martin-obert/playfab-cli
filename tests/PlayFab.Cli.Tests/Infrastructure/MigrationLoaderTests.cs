@@ -862,6 +862,116 @@ public class MigrationLoaderTests : IDisposable
         Assert.Contains(errors, e => e.Contains("cannot be used with 'delete-leaderboard'"));
     }
 
+    [Fact]
+    public void Validate_CreateLeaderboardLinkedColumn_Valid()
+    {
+        var path = WriteYaml("20261028120000_test.yml", """
+            description: "test"
+            up:
+              - type: create-leaderboard
+                name: TopScores
+                leaderboardColumns:
+                  - name: Score
+                    sortDirection: Descending
+                    linkedStatistic: PlayerScore
+                    linkedStatisticColumn: Value
+            down: []
+            """);
+        var migration = MigrationLoader.LoadSingle(path);
+
+        var errors = MigrationLoader.Validate(migration);
+
+        Assert.Empty(errors);
+    }
+
+    [Fact]
+    public void Validate_CreateLeaderboardMixedLinkedAndPlainColumns_Valid()
+    {
+        var path = WriteYaml("20261028120000_test.yml", """
+            description: "test"
+            up:
+              - type: create-leaderboard
+                name: TopScores
+                leaderboardColumns:
+                  - name: Score
+                    sortDirection: Descending
+                    linkedStatistic: PlayerScore
+                    linkedStatisticColumn: Value
+                  - name: Rank
+                    sortDirection: Ascending
+            down: []
+            """);
+        var migration = MigrationLoader.LoadSingle(path);
+
+        var errors = MigrationLoader.Validate(migration);
+
+        Assert.Empty(errors);
+    }
+
+    [Fact]
+    public void Validate_CreateLeaderboardLinkedStatisticWithoutColumn_ReturnsError()
+    {
+        var path = WriteYaml("20261028120000_test.yml", """
+            description: "test"
+            up:
+              - type: create-leaderboard
+                name: TopScores
+                leaderboardColumns:
+                  - name: Score
+                    sortDirection: Descending
+                    linkedStatistic: PlayerScore
+            down: []
+            """);
+        var migration = MigrationLoader.LoadSingle(path);
+
+        var errors = MigrationLoader.Validate(migration);
+
+        Assert.Contains(errors, e => e.Contains("must both be set or both be omitted"));
+    }
+
+    [Fact]
+    public void Validate_CreateLeaderboardLinkedColumnWithoutStatistic_ReturnsError()
+    {
+        var path = WriteYaml("20261028120000_test.yml", """
+            description: "test"
+            up:
+              - type: create-leaderboard
+                name: TopScores
+                leaderboardColumns:
+                  - name: Score
+                    sortDirection: Descending
+                    linkedStatisticColumn: Value
+            down: []
+            """);
+        var migration = MigrationLoader.LoadSingle(path);
+
+        var errors = MigrationLoader.Validate(migration);
+
+        Assert.Contains(errors, e => e.Contains("must both be set or both be omitted"));
+    }
+
+    [Fact]
+    public void Validate_CreateLeaderboardEmptyLinkedStatistic_ReturnsError()
+    {
+        var path = WriteYaml("20261028120000_test.yml", """
+            description: "test"
+            up:
+              - type: create-leaderboard
+                name: TopScores
+                leaderboardColumns:
+                  - name: Score
+                    sortDirection: Descending
+                    linkedStatistic: ""
+                    linkedStatisticColumn: Value
+            down: []
+            """);
+        var migration = MigrationLoader.LoadSingle(path);
+
+        var errors = MigrationLoader.Validate(migration);
+
+        Assert.Contains(errors, e => e.Contains("linkedStatistic must not be empty"));
+    }
+
     private string WriteYaml(string filename, string content)
     {
         var path = Path.Combine(_tempDir, filename);

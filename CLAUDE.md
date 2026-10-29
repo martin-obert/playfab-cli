@@ -99,13 +99,17 @@ Migration files use YAML format with timestamp-prefixed filenames (`202610281200
   leaderboardColumns:
     - name: Score
       sortDirection: Descending  # Ascending | Descending
+      linkedStatistic: PlayerScore          # optional — must be paired with linkedStatisticColumn
+      linkedStatisticColumn: Value          # the column within that statistic to source values from
+    - name: Rank
+      sortDirection: Ascending   # plain column, no link — mixing linked and plain columns is fine
 
 # Leaderboard deletion — name only, no other fields allowed:
 - type: delete-leaderboard
   name: TopScores
 ```
 
-Leaderboard columns linked to a statistic (`linkedStatistic`/`linkedStatisticColumn`) are not supported yet — planned follow-up.
+A leaderboard column may optionally link to an existing statistic's column via `linkedStatistic`/`linkedStatisticColumn` — both must be set together or both omitted. PlayFab keeps linked columns in sync with the statistic automatically. The loader only validates field shape/pairing, not that the referenced statistic actually exists — PlayFab rejects a bad reference at `migrate up`.
 
 **Operation types:**
 - Implemented: `set-title-data`, `delete-title-data`, `set-title-internal-data`, `delete-title-internal-data`, `create-statistic`, `delete-statistic`, `create-leaderboard`, `delete-leaderboard`

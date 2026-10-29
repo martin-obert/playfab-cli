@@ -42,4 +42,8 @@ public sealed class LeaderboardColumnStep
 {
     public required string Name { get; init; }
     public required string SortDirection { get; init; }
+
+    // Optional link to an existing statistic's column (must both be set or both be omitted)
+    public string? LinkedStatistic { get; init; }
+    public string? LinkedStatisticColumn { get; init; }
 }
