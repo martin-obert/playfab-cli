@@ -86,4 +86,55 @@ public class MigrateCommandParsingTests
         var result = _rootCommand.Parse("migrate --migrations-dir ./custom status");
         Assert.Empty(result.Errors);
     }
+
+    [Fact]
+    public void MigratePlanStatistics_ParsesWithoutArgs()
+    {
+        var result = _rootCommand.Parse("migrate plan statistics");
+        Assert.Empty(result.Errors);
+    }
+
+    [Fact]
+    public void MigratePlanStatistics_ParsesStatisticsDirOption()
+    {
+        var result = _rootCommand.Parse("migrate plan statistics --statistics-dir custom/path");
+        Assert.Empty(result.Errors);
+    }
+
+    [Fact]
+    public void MigratePlanStatistics_ParsesIncludeDeletesOption()
+    {
+        var result = _rootCommand.Parse("migrate plan statistics --include-deletes");
+        Assert.Empty(result.Errors);
+    }
+
+    [Fact]
+    public void MigratePlanStatistics_ParsesAllowRecreateOption()
+    {
+        var result = _rootCommand.Parse("migrate plan statistics --allow-recreate");
+        Assert.Empty(result.Errors);
+    }
+
+    [Fact]
+    public void MigratePlanStatistics_ParsesAllFlags()
+    {
+        var result = _rootCommand.Parse("migrate plan statistics --include-deletes --allow-recreate --statistics-dir stats");
+        Assert.Empty(result.Errors);
+    }
+
+    [Fact]
+    public void MigratePlanStatistics_InheritsMigrationsDirFromGroup()
+    {
+        var result = _rootCommand.Parse("migrate --migrations-dir ./custom plan statistics");
+        Assert.Empty(result.Errors);
+    }
+
+    [Fact]
+    public void MigratePlanStatistics_InheritsGlobalOptions()
+    {
+        var result = _rootCommand.Parse("--title-id GLOBAL migrate plan statistics");
+
+        Assert.Empty(result.Errors);
+        Assert.Equal("GLOBAL", result.GetValue(_globalOptions.TitleId));
+    }
 }

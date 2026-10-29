@@ -1,3 +1,4 @@
+using PlayFab;
 using PlayFab.Cli.Models;
 using PlayFab.ProgressionModels;
 using YamlDotNet.Serialization;
@@ -105,5 +106,43 @@ public static class StatisticDefinitionStore
                 AggregationMethod = c.AggregationMethod.ToString(),
             }).ToList(),
         };
+    }
+
+    public static StatisticDefinitionFile MapFromPlayFab(StatisticDefinition definition)
+    {
+        return new StatisticDefinitionFile
+        {
+            Name = definition.Name,
+            EntityType = definition.EntityType ?? "title_player_account",
+            ResetInterval = definition.VersionConfiguration?.ResetInterval.ToString() ?? "Manual",
+            MaxQueryableVersions = (int)(definition.VersionConfiguration?.MaxQueryableVersions ?? 1),
+            Columns = (definition.Columns ?? []).Select(c => new StatisticColumnDefinition
+            {
+                Name = c.Name,
+                AggregationMethod = c.AggregationMethod.ToString(),
+            }).ToList(),
+        };
+    }
+
+    public static async Task<List<StatisticDefinitionFile>> FetchAllFromPlayFabAsync()
+    {
+        var definitions = new List<StatisticDefinitionFile>();
+        string? skipToken = null;
+
+        do
+        {
+            var result = await PlayFabProgressionAPI.ListStatisticDefinitionsAsync(
+                new ListStatisticDefinitionsRequest { SkipToken = skipToken });
+
+            if (result.Error is not null)
+                throw new InvalidOperationException($"ListStatisticDefinitions failed: {result.Error.ErrorMessage}");
+
+            foreach (var def in result.Result.StatisticDefinitions ?? [])
+                definitions.Add(MapFromPlayFab(def));
+
+            skipToken = result.Result.SkipToken;
+        } while (skipToken is not null);
+
+        return definitions;
     }
 }

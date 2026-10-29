@@ -1,6 +1,6 @@
 using System.CommandLine;
-using PlayFab;
 using PlayFab.Cli.Infrastructure;
+using PlayFab.Cli.Models;
 using PlayFab.ProgressionModels;
 using Spectre.Console;
 
@@ -420,23 +420,16 @@ public static class StatsCommands
 
             if (pullAll)
             {
-                var definitions = new List<StatisticDefinition>();
-                string? skipToken = null;
-
-                do
+                List<StatisticDefinitionFile> definitions;
+                try
                 {
-                    var result = await PlayFabProgressionAPI.ListStatisticDefinitionsAsync(
-                        new ListStatisticDefinitionsRequest { SkipToken = skipToken });
-
-                    if (result.Error is not null)
-                    {
-                        Console.Error.WriteLine($"ListStatisticDefinitions failed: {result.Error.ErrorMessage}");
-                        return;
-                    }
-
-                    definitions.AddRange(result.Result.StatisticDefinitions ?? []);
-                    skipToken = result.Result.SkipToken;
-                } while (skipToken is not null);
+                    definitions = await StatisticDefinitionStore.FetchAllFromPlayFabAsync();
+                }
+                catch (Exception ex)
+                {
+                    Console.Error.WriteLine(ex.Message);
+                    return;
+                }
 
                 if (definitions.Count == 0)
                 {
@@ -444,24 +437,13 @@ public static class StatsCommands
                     return;
                 }
 
-                var saved = 0;
-                foreach (var definition in definitions)
+                foreach (var mapped in definitions)
                 {
-                    var mapped = StatisticDefinitionStore.MapFromPlayFab(
-                        new GetStatisticDefinitionResponse
-                        {
-                            Name = definition.Name,
-                            EntityType = definition.EntityType,
-                            Columns = definition.Columns,
-                            VersionConfiguration = definition.VersionConfiguration,
-                        });
-
                     StatisticDefinitionStore.Save(mapped, statisticsDir);
                     Console.WriteLine($"  Saved {mapped.Name}.yml");
-                    saved++;
                 }
 
-                Console.WriteLine($"{saved} statistic definition(s) pulled to '{statisticsDir}/'.");
+                Console.WriteLine($"{definitions.Count} statistic definition(s) pulled to '{statisticsDir}/'.");
             }
             else
             {

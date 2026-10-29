@@ -162,6 +162,17 @@ Only desired-state fields are stored. Runtime metadata (version, created, lastRe
 - `StatisticDefinitionFile` / `StatisticColumnDefinition` (`Models/StatisticDefinitionFile.cs`) — strongly-typed model, separate from `MigrationStep`
 - `StatisticDefinitionStore` (`Infrastructure/StatisticDefinitionStore.cs`) — load/save/validate YAML files, map from PlayFab API response
 - `ValidationConstants` (`Models/ValidationConstants.cs`) — shared validation sets (aggregation methods, reset intervals, sort directions) used by both `MigrationLoader` and `StatisticDefinitionStore`
+- `StatisticReconciler` (`Infrastructure/StatisticReconciler.cs`) — pure comparison logic: takes local and remote definition lists, returns a list of `ReconcileAction`s (Create/Delete/Recreate/Synced/VersionConfigDrift)
+- `MigrationGenerator` (`Infrastructure/MigrationGenerator.cs`) — converts a `ReconcileResult` into a `MigrationDefinition` with symmetric up/down steps
+
+**`playfab migrate plan statistics [--statistics-dir <path>] [--include-deletes] [--allow-recreate]`** compares local definition files against live PlayFab state and generates a migration file for the differences. Inherits `--migrations-dir` from the `migrate` group. Reconciliation rules:
+- Local-only statistic → `create-statistic` step
+- PlayFab-only statistic → warned unless `--include-deletes` is set (then `delete-statistic`)
+- Column/entity-type mismatch → warned unless `--allow-recreate` is set (then destructive delete+create pair — loses player data)
+- Version config drift (resetInterval/maxQueryableVersions) → warned only (`update-statistic` not yet implemented)
+- Matching → synced, no action
+
+The `plan` subcommand group under `migrate` is designed for future expansion (e.g. `playfab migrate plan leaderboards`).
 
 `playfab leaderboard get --name <name> [--page-size N] [--starting-position N] [--version N]` reads a leaderboard's ranked entries straight from `PlayFabProgressionAPI.GetLeaderboardAsync` (`Commands/Leaderboard/LeaderboardCommands.cs`) — unlike `stats get`, this isn't scoped to tracked synthetic players; it returns a page of the real ranking (rank, entity ID, display name, per-column scores), matching how Game Manager itself would read it.
 
