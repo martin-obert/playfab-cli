@@ -19,7 +19,7 @@ playfab players list                    # List tracked accounts from local JSON
 
 ## API Surface
 
-- **Create**: `PlayFabServerAPI.LoginWithServerCustomIdAsync` with `CreateAccount = true` to create the player, then `PlayFabAdminAPI.UpdateUserTitleDisplayNameAsync` to set a human-readable display name.
+- **Create**: `PlayFabServerAPI.LoginWithServerCustomIdAsync` with `CreateAccount = true` to create the player, then `PlayFabAdminAPI.UpdateUserTitleDisplayNameAsync` to set the classic display name, then `PlayFabProfilesAPI.SetDisplayNameAsync` to set the Entity Profile's display name — Progression/Leaderboard APIs read the latter, not the classic one, so both calls are needed for the name to show up there. The second call requires an entity token (`PlayFabAuth.RequireEntityCredentialsAsync`), not just the secret key.
 - **Delete**: `PlayFabAdminAPI.DeletePlayerAsync` (title-scoped deletion).
 - **Display names**: Generated via `Bogus` NuGet package (`Faker.Internet.UserName()`), truncated to 25 chars (PlayFab limit). Retries up to 3 times on name conflicts.
 

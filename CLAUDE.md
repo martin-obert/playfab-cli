@@ -127,7 +127,7 @@ Constants and sets live in `Models/OperationTypes.cs`. To add a new operation ty
 
 ### Synthetic Players, Statistic Seeding & Leaderboard Readback
 
-`playfab players create/delete/list` manages synthetic test player accounts (ADR-0002), tracked per-title in `~/.playfab/synthetic-players-{TITLEID}.json` via `SyntheticPlayerService`/`SyntheticPlayerStore`.
+`playfab players create/delete/list` manages synthetic test player accounts (ADR-0002), tracked per-title in `~/.playfab/synthetic-players-{TITLEID}.json` via `SyntheticPlayerService`/`SyntheticPlayerStore`. `create` sets the display name twice — `UpdateUserTitleDisplayNameAsync` (classic) and `PlayFabProfilesAPI.SetDisplayNameAsync` (Entity Profile) — because Progression/Leaderboard APIs read the Entity Profile name, not the classic one; this requires `RequireEntityCredentialsAsync`, not just the secret key.
 
 `playfab stats seed --statistic <name> --column <Name:min-max> [--column ...] (--all | --player-id <id> ...) [--count N]` writes randomized values into selected columns of an existing statistic for tracked synthetic players only (same safety rule as `players delete`: untracked IDs are rejected). PlayFab's `UpdateStatisticsAsync` takes a full positional `Scores` list per statistic (ordered to match the statistic's defined columns), not a named partial update — `StatisticSeedService` implements "seed only some columns" as **read-merge-write**: fetch the player's current scores (`GetStatisticsAsync`), overwrite only the targeted positions with a fresh `Random.Shared.Next(min, max + 1)`, and submit the full merged list back. Column existence is validated against the statistic's live `GetStatisticDefinitionAsync` result, not local migration YAML.
 

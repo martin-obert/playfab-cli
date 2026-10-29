@@ -4,6 +4,7 @@ using PlayFab;
 using PlayFab.Cli.Models;
 using AdminModels = PlayFab.AdminModels;
 using ServerModels = PlayFab.ServerModels;
+using ProfilesModels = PlayFab.ProfilesModels;
 
 namespace PlayFab.Cli.Infrastructure;
 
@@ -78,6 +79,19 @@ public static class SyntheticPlayerService
         if (displayResult.Error is not null)
             throw new InvalidOperationException(
                 $"UpdateUserTitleDisplayName failed: {displayResult.Error.ErrorMessage}");
+
+        // Classic UpdateUserTitleDisplayName only sets the legacy display name. Progression/Leaderboard APIs
+        // read the Entity Profile's display name instead, which requires this separate call to populate.
+        var profileResult = await PlayFabProfilesAPI.SetDisplayNameAsync(
+            new ProfilesModels.SetDisplayNameRequest
+            {
+                Entity = new ProfilesModels.EntityKey { Id = playFabId, Type = "title_player_account" },
+                DisplayName = displayName,
+            });
+
+        if (profileResult.Error is not null)
+            throw new InvalidOperationException(
+                $"SetDisplayName failed: {profileResult.Error.ErrorMessage}");
 
         return new SyntheticPlayer
         {

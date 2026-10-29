@@ -40,7 +40,7 @@ public static class PlayersCommands
                 return;
             }
 
-            var creds = PlayFabAuth.RequireCredentials(titleId, secretKey);
+            var creds = await PlayFabAuth.RequireEntityCredentialsAsync(titleId, secretKey);
             var store = SyntheticPlayerService.Load(creds.TitleId!);
 
             var created = 0;
