@@ -137,6 +137,31 @@ Constants and sets live in `Models/OperationTypes.cs`. To add a new operation ty
 
 `playfab stats definition --statistic <name>` displays the statistic's *definition* (not values) straight from `GetStatisticDefinitionAsync`: entity type, current version, reset interval, max queryable versions, created/last-reset timestamps, linked leaderboard names, and each column's aggregation method. The `linkedLeaderboardNames` field is the quickest way to check whether a statistic has any leaderboard attached to it at all.
 
+### Statistic Definition Files (Desired-State)
+
+Statistic definitions can be stored as standalone YAML files in a `statistics/` folder (one file per statistic), serving as the desired-state source of truth for what statistics should exist on a PlayFab title. These are separate from migration files and use a dedicated strongly-typed model.
+
+**File format** — `statistics/<Name>.yml`:
+
+```yaml
+name: PlayerScore
+entityType: title_player_account
+resetInterval: Month
+maxQueryableVersions: 3
+columns:
+  - name: Value
+    aggregationMethod: Sum
+```
+
+Only desired-state fields are stored. Runtime metadata (version, created, lastResetTime, linkedLeaderboardNames) is excluded — it belongs to PlayFab and would drift.
+
+**`playfab stats pull --statistic <name> [--statistics-dir <path>]`** fetches a single statistic definition from PlayFab via `GetStatisticDefinitionAsync` and writes it as a YAML file. **`playfab stats pull --all [--statistics-dir <path>]`** fetches all statistics via `ListStatisticDefinitionsAsync` (paginated). `--statistics-dir` defaults to `statistics/`. Overwrites existing files (pull is always a fresh snapshot).
+
+**Key classes:**
+- `StatisticDefinitionFile` / `StatisticColumnDefinition` (`Models/StatisticDefinitionFile.cs`) — strongly-typed model, separate from `MigrationStep`
+- `StatisticDefinitionStore` (`Infrastructure/StatisticDefinitionStore.cs`) — load/save/validate YAML files, map from PlayFab API response
+- `ValidationConstants` (`Models/ValidationConstants.cs`) — shared validation sets (aggregation methods, reset intervals, sort directions) used by both `MigrationLoader` and `StatisticDefinitionStore`
+
 `playfab leaderboard get --name <name> [--page-size N] [--starting-position N] [--version N]` reads a leaderboard's ranked entries straight from `PlayFabProgressionAPI.GetLeaderboardAsync` (`Commands/Leaderboard/LeaderboardCommands.cs`) — unlike `stats get`, this isn't scoped to tracked synthetic players; it returns a page of the real ranking (rank, entity ID, display name, per-column scores), matching how Game Manager itself would read it.
 
 `playfab leaderboard definition --name <name>` displays the leaderboard's *definition* straight from `GetLeaderboardDefinitionAsync`: entity type, current version, size limit, reset interval, max queryable versions, created/last-reset timestamps, and each column's sort direction plus linked statistic (if any).
@@ -160,4 +185,4 @@ Priority: CLI args → env vars (`PLAYFAB_TITLE_ID`, `PLAYFAB_SECRET_KEY`) → c
 
 ## Testing
 
-Tests use xunit and mirror the src folder structure (`Commands/`, `Infrastructure/`, `Models/`). Environment variable tests use `[Collection("Environment")]` for sequential execution. `CliConfig` tests use temp directories. `CredentialResolver` tests pass explicit `CliConfig` instances. `MigrationLoader` tests use temp directories with YAML files. Runner, LedgerService, and the live-API parts of `SyntheticPlayerService`/`StatisticSeedService` are not unit-tested (they make PlayFab API calls) — only their pure logic (e.g. `StatisticSeedService.ParseColumnSpec`/`ValidateColumns`/`MergeScores`) is.
+Tests use xunit and mirror the src folder structure (`Commands/`, `Infrastructure/`, `Models/`). Environment variable tests use `[Collection("Environment")]` for sequential execution. `CliConfig` tests use temp directories. `CredentialResolver` tests pass explicit `CliConfig` instances. `MigrationLoader` tests use temp directories with YAML files. `StatisticDefinitionStore` tests use temp directories and cover load/save/validate/map logic. Runner, LedgerService, and the live-API parts of `SyntheticPlayerService`/`StatisticSeedService` are not unit-tested (they make PlayFab API calls) — only their pure logic (e.g. `StatisticSeedService.ParseColumnSpec`/`ValidateColumns`/`MergeScores`) is.

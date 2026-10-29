@@ -179,9 +179,9 @@ public static partial class MigrationLoader
         }
     }
 
-    private static readonly HashSet<string> ValidAggregationMethods = new(StringComparer.OrdinalIgnoreCase) { "Last", "Min", "Max", "Sum" };
-    private static readonly HashSet<string> ValidResetIntervals = new(StringComparer.OrdinalIgnoreCase) { "Manual", "Hour", "Day", "Week", "Month" };
-    private static readonly HashSet<string> ValidSortDirections = new(StringComparer.OrdinalIgnoreCase) { "Ascending", "Descending" };
+    private static HashSet<string> ValidAggregationMethods => ValidationConstants.ValidAggregationMethods;
+    private static HashSet<string> ValidResetIntervals => ValidationConstants.ValidResetIntervals;
+    private static HashSet<string> ValidSortDirections => ValidationConstants.ValidSortDirections;
 
     private static void ValidateName(MigrationStep step, string prefix, List<string> errors)
     {

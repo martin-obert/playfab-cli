@@ -1,4 +1,5 @@
 using System.CommandLine;
+using PlayFab;
 using PlayFab.Cli.Infrastructure;
 using PlayFab.ProgressionModels;
 using Spectre.Console;
@@ -11,10 +12,19 @@ public static class StatsCommands
 {
     public static Command CreateGroup(GlobalOptions globalOptions)
     {
+        var statisticsDirOption = new Option<string>("--statistics-dir")
+        {
+            Description = "Path to statistic definitions directory",
+            DefaultValueFactory = _ => "statistics",
+            Recursive = true,
+        };
+
         var group = new Command("stats", "Seed and read back statistic values for synthetic test players");
+        group.Add(statisticsDirOption);
         group.Add(CreateSeedCommand(globalOptions));
         group.Add(CreateGetCommand(globalOptions));
         group.Add(CreateDefinitionCommand(globalOptions));
+        group.Add(CreatePullCommand(globalOptions, statisticsDirOption));
         return group;
     }
 
@@ -371,6 +381,104 @@ public static class StatsCommands
                     linkedLeaderboardNames = linkedLeaderboards,
                     columns = columns.Select(c => new { name = c.Name, aggregationMethod = c.AggregationMethod.ToString() }),
                 });
+            }
+        });
+
+        return command;
+    }
+
+    private static Command CreatePullCommand(GlobalOptions globalOptions, Option<string> statisticsDirOption)
+    {
+        var statisticOption = new Option<string?>("--statistic")
+        {
+            Description = "Name of a single statistic to pull",
+        };
+        var allOption = new Option<bool>("--all")
+        {
+            Description = "Pull all statistic definitions from PlayFab",
+        };
+
+        var command = new Command("pull", "Pull statistic definitions from PlayFab and save as YAML files");
+        command.Add(statisticOption);
+        command.Add(allOption);
+
+        command.SetAction(async parseResult =>
+        {
+            var titleId = parseResult.GetValue(globalOptions.TitleId);
+            var secretKey = parseResult.GetValue(globalOptions.SecretKey);
+            var statisticName = parseResult.GetValue(statisticOption);
+            var pullAll = parseResult.GetValue(allOption);
+            var statisticsDir = parseResult.GetValue(statisticsDirOption)!;
+
+            if (!pullAll && statisticName is null)
+            {
+                Console.Error.WriteLine("Specify --statistic <name> or --all.");
+                return;
+            }
+
+            await PlayFabAuth.RequireEntityCredentialsAsync(titleId, secretKey);
+
+            if (pullAll)
+            {
+                var definitions = new List<StatisticDefinition>();
+                string? skipToken = null;
+
+                do
+                {
+                    var result = await PlayFabProgressionAPI.ListStatisticDefinitionsAsync(
+                        new ListStatisticDefinitionsRequest { SkipToken = skipToken });
+
+                    if (result.Error is not null)
+                    {
+                        Console.Error.WriteLine($"ListStatisticDefinitions failed: {result.Error.ErrorMessage}");
+                        return;
+                    }
+
+                    definitions.AddRange(result.Result.StatisticDefinitions ?? []);
+                    skipToken = result.Result.SkipToken;
+                } while (skipToken is not null);
+
+                if (definitions.Count == 0)
+                {
+                    Console.WriteLine("No statistic definitions found.");
+                    return;
+                }
+
+                var saved = 0;
+                foreach (var definition in definitions)
+                {
+                    var mapped = StatisticDefinitionStore.MapFromPlayFab(
+                        new GetStatisticDefinitionResponse
+                        {
+                            Name = definition.Name,
+                            EntityType = definition.EntityType,
+                            Columns = definition.Columns,
+                            VersionConfiguration = definition.VersionConfiguration,
+                        });
+
+                    StatisticDefinitionStore.Save(mapped, statisticsDir);
+                    Console.WriteLine($"  Saved {mapped.Name}.yml");
+                    saved++;
+                }
+
+                Console.WriteLine($"{saved} statistic definition(s) pulled to '{statisticsDir}/'.");
+            }
+            else
+            {
+                GetStatisticDefinitionResponse response;
+                try
+                {
+                    response = await StatisticSeedService.GetDefinitionAsync(statisticName!);
+                }
+                catch (Exception ex)
+                {
+                    Console.Error.WriteLine($"Failed to get statistic '{statisticName}': {ex.Message}");
+                    return;
+                }
+
+                var mapped = StatisticDefinitionStore.MapFromPlayFab(response);
+                StatisticDefinitionStore.Save(mapped, statisticsDir);
+                Console.WriteLine($"Saved {mapped.Name}.yml to '{statisticsDir}/'.");
             }
         });
 
