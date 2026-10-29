@@ -20,6 +20,7 @@
     <PackageReference Include="PlayFabAllSDK" Version="1.*" />
     <PackageReference Include="Spectre.Console" Version="0.*" />
     <PackageReference Include="Spectre.Console.Json" Version="0.*" />
+    <PackageReference Include="Bogus" Version="35.*" />
     <PackageReference Include="YamlDotNet" Version="16.*" />
   </ItemGroup>
 
