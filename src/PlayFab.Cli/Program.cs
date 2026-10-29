@@ -2,6 +2,7 @@ using System.CommandLine;
 using PlayFab.Cli.Commands.Config;
 using PlayFab.Cli.Commands.Migrate;
 using PlayFab.Cli.Commands.Players;
+using PlayFab.Cli.Commands.Stats;
 using PlayFab.Cli.Infrastructure;
 
 var titleIdOption = new Option<string?>("--title-id")
@@ -32,6 +33,7 @@ rootCommand.Add(outputOption);
 rootCommand.Add(ConfigCommands.CreateGroup(globalOptions));
 rootCommand.Add(MigrateCommands.CreateGroup(globalOptions));
 rootCommand.Add(PlayersCommands.CreateGroup(globalOptions));
+rootCommand.Add(StatsCommands.CreateGroup(globalOptions));
 
 var parseResult = rootCommand.Parse(args);
 return await parseResult.InvokeAsync();

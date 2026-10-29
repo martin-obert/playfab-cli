@@ -125,6 +125,14 @@ Constants and sets live in `Models/OperationTypes.cs`. To add a new operation ty
 - `MigrationRunner` — executes up/down steps via PlayFab Admin API (expands batch steps into individual API calls) and Progression API (statistic and leaderboard definitions), updates ledger
 - `PlayFabAuth` — resolves credentials, configures `PlayFabSettings.staticSettings`, and (`RequireEntityCredentialsAsync`) acquires the entity token Progression API calls need
 
+### Synthetic Players & Statistic Seeding
+
+`playfab players create/delete/list` manages synthetic test player accounts (ADR-0002), tracked per-title in `~/.playfab/synthetic-players-{TITLEID}.json` via `SyntheticPlayerService`/`SyntheticPlayerStore`.
+
+`playfab stats seed --statistic <name> --column <Name:min-max> [--column ...] (--all | --player-id <id> ...) [--count N]` writes randomized values into selected columns of an existing statistic for tracked synthetic players only (same safety rule as `players delete`: untracked IDs are rejected). PlayFab's `UpdateStatisticsAsync` takes a full positional `Scores` list per statistic (ordered to match the statistic's defined columns), not a named partial update — `StatisticSeedService` implements "seed only some columns" as **read-merge-write**: fetch the player's current scores (`GetStatisticsAsync`), overwrite only the targeted positions with a fresh `Random.Shared.Next(min, max + 1)`, and submit the full merged list back. Column existence is validated against the statistic's live `GetStatisticDefinitionAsync` result, not local migration YAML.
+
+`--count N` (default 1) repeats the write N times per player, each with an independently randomized value — e.g. to build up a `Sum` column's running total or try several `Min`/`Max` rolls. Whether a given `--column` run is still visible after N writes depends on its aggregation method: `Sum` accumulates, `Min`/`Max` settle to the extreme across all N, `Last` keeps only the final write (the other N-1 leave no trace). Since it's unconfirmed whether PlayFab's server overwrites or aggregates incoming values, `ValidateUntouchedSumColumns` refuses to seed a statistic that has a `Sum` column *not* included in `--column` — resending that column's existing value every write would double it if the server aggregates. `Min`/`Max`/`Last` columns left untouched are safe under either server behavior, so they aren't restricted.
+
 ### Credential Resolution (`CredentialResolver`)
 
 Priority: CLI args → env vars (`PLAYFAB_TITLE_ID`, `PLAYFAB_SECRET_KEY`) → config file (`~/.playfab/config.json`).
@@ -144,4 +152,4 @@ Priority: CLI args → env vars (`PLAYFAB_TITLE_ID`, `PLAYFAB_SECRET_KEY`) → c
 
 ## Testing
 
-Tests use xunit and mirror the src folder structure (`Commands/`, `Infrastructure/`, `Models/`). Environment variable tests use `[Collection("Environment")]` for sequential execution. `CliConfig` tests use temp directories. `CredentialResolver` tests pass explicit `CliConfig` instances. `MigrationLoader` tests use temp directories with YAML files. Runner and LedgerService are not unit-tested (they make PlayFab API calls).
+Tests use xunit and mirror the src folder structure (`Commands/`, `Infrastructure/`, `Models/`). Environment variable tests use `[Collection("Environment")]` for sequential execution. `CliConfig` tests use temp directories. `CredentialResolver` tests pass explicit `CliConfig` instances. `MigrationLoader` tests use temp directories with YAML files. Runner, LedgerService, and the live-API parts of `SyntheticPlayerService`/`StatisticSeedService` are not unit-tested (they make PlayFab API calls) — only their pure logic (e.g. `StatisticSeedService.ParseColumnSpec`/`ValidateColumns`/`MergeScores`) is.
