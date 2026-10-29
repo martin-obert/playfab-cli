@@ -3,15 +3,13 @@ using PlayFab.Cli.Infrastructure;
 
 namespace PlayFab.Cli.Commands.Config;
 
-/// <summary>Commands for managing persisted CLI credentials.</summary>
 public static class ConfigCommands
 {
-    /// <summary>Registers the 'config' command group with set and show subcommands.</summary>
-    public static Command CreateGroup(Option<string?> globalTitleId, Option<string?> globalSecretKey, Option<OutputFormat> outputOption)
+    public static Command CreateGroup(GlobalOptions globalOptions)
     {
-        var group = new Command("config", "Manage PlayFab CLI configuration");
+        var group = new Command("config", "Manage PlayFab CLI credentials and configuration");
         group.Add(CreateSetCommand());
-        group.Add(CreateShowCommand(globalTitleId, globalSecretKey, outputOption));
+        group.Add(CreateShowCommand(globalOptions));
         return group;
     }
 
@@ -40,25 +38,25 @@ public static class ConfigCommands
         return command;
     }
 
-    private static Command CreateShowCommand(Option<string?> globalTitleId, Option<string?> globalSecretKey, Option<OutputFormat> outputOption)
+    private static Command CreateShowCommand(GlobalOptions globalOptions)
     {
         var command = new Command("show", "Display the resolved configuration (secrets masked)");
 
         command.SetAction(parseResult =>
         {
-            var titleId = parseResult.GetValue(globalTitleId);
-            var secretKey = parseResult.GetValue(globalSecretKey);
-            var output = parseResult.GetValue(outputOption);
+            var titleId = parseResult.GetValue(globalOptions.TitleId);
+            var secretKey = parseResult.GetValue(globalOptions.SecretKey);
+            var output = parseResult.GetValue(globalOptions.Output);
 
             var persisted = CliConfig.Load();
-            var resolved = persisted.MergeWith(titleId, secretKey);
+            var resolved = CredentialResolver.Resolve(titleId, secretKey);
 
             var data = new Dictionary<string, string>
             {
                 ["TitleId"] = resolved.TitleId ?? "(not set)",
                 ["SecretKey"] = MaskSecret(resolved.SecretKey),
-                ["Source: TitleId"] = DescribeSource(titleId, "PLAYFAB_TITLE_ID", persisted.TitleId),
-                ["Source: SecretKey"] = DescribeSource(secretKey, "PLAYFAB_SECRET_KEY", persisted.SecretKey),
+                ["Source: TitleId"] = CredentialResolver.DescribeSource(titleId, "PLAYFAB_TITLE_ID", persisted.TitleId),
+                ["Source: SecretKey"] = CredentialResolver.DescribeSource(secretKey, "PLAYFAB_SECRET_KEY", persisted.SecretKey),
             };
 
             if (output == OutputFormat.Table)
@@ -75,13 +73,5 @@ public static class ConfigCommands
         if (string.IsNullOrEmpty(value)) return "(not set)";
         if (value.Length <= 4) return new string('*', value.Length);
         return string.Concat(value.AsSpan(0, 4), new string('*', value.Length - 4));
-    }
-
-    private static string DescribeSource(string? cliArg, string envVar, string? fileValue)
-    {
-        if (cliArg is not null) return "CLI argument";
-        if (Environment.GetEnvironmentVariable(envVar) is not null) return $"env: {envVar}";
-        if (fileValue is not null) return "config file";
-        return "not set";
     }
 }

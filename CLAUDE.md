@@ -7,14 +7,21 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ```bash
 dotnet build                                            # Build entire solution
 dotnet test                                             # Run all tests
-dotnet test --filter "FullyQualifiedName~CliConfigTests.MergeWith_CliArgs_TakePriority"  # Single test
+dotnet test --filter "FullyQualifiedName~TestClassName.MethodName"  # Single test
 dotnet run --project src/PlayFab.Cli -- --help          # Run CLI locally
 dotnet pack src/PlayFab.Cli/PlayFab.Cli.csproj -o artifacts  # Package as dotnet tool
 ```
 
+Requires .NET 10 SDK.
+
 ## Architecture
 
-This is a .NET 10 CLI tool (`playfab`) for automating PlayFab operations, packaged as a `dotnet tool` via NuGet.
+A migration-based CLI tool (`playfab`) for configuring PlayFab titles, similar to database migrations (EF Core, Flyway). Packaged as a `dotnet tool` via NuGet. Targets `net10.0` with nullable enabled.
+
+### Two Distinct Configuration Concepts
+
+- **Credentials file** (`~/.playfab/config.json`) — stores PlayFab Title ID and Secret Key
+- **Migration files** (`migrations/*.yml`) — YAML files defining up/down steps that modify a PlayFab title's configuration. The ledger of applied migrations is stored as PlayFab Title Internal Data under key `__playfab_cli_migrations`.
 
 ### CLI Framework: System.CommandLine 2.0 (stable)
 
@@ -29,29 +36,128 @@ The 2.0 stable API differs significantly from beta documentation found online:
 
 ### Command Pattern
 
-Commands follow `playfab <group> <verb>` (e.g., `playfab titledata get`). Each command group is a static class in `Commands/<Group>/` exposing a `CreateGroup()` method that returns a `Command` with subcommands. Global options (`--title-id`, `--secret-key`, `--output`) are defined in `Program.cs` with `Recursive = true` and threaded into command groups via method parameters.
+Commands follow `playfab <group> <verb>` (e.g., `playfab migrate up`). Each command group is a static class in `Commands/<Group>/<Group>Commands.cs` with:
 
-To add a new command group: create `Commands/<Group>/<Group>Commands.cs` with a `CreateGroup()` static method, then add one `rootCommand.Add()` call in `Program.cs`.
+```csharp
+public static Command CreateGroup(GlobalOptions globalOptions)
+```
 
-### Configuration Cascade
+`GlobalOptions` is a record in `Infrastructure/GlobalOptions.cs` that bundles the three recursive options (`--title-id`, `--secret-key`, `--output`). To add a new command group: create the static class, then add one `rootCommand.Add()` call in `Program.cs`.
 
-`CliConfig` resolves credentials in priority order: CLI args → env vars (`PLAYFAB_TITLE_ID`, `PLAYFAB_SECRET_KEY`) → persisted file (`~/.playfab/config.json`). The `MergeWith()` method implements this cascade.
+### Migration System
 
-### Output
+Migration files use YAML format with timestamp-prefixed filenames (`20261028120000_add_data.yml`). The ID is parsed from the filename. Each file has `description`, `up` (list of steps), and `down` (list of steps).
 
-All commands support `--output Json` (default, pipeable) and `--output Table` (Spectre.Console). `OutputHelper` centralizes both paths — use `WriteJson()` for structured data and `WriteTable()` for key-value displays.
+**Step syntax** — key/value operations (`*-title-data`) use one of three mutually exclusive forms; statistic and leaderboard operations use a structured, name-based form instead:
 
-### Leaderboard Commands Structure
+```yaml
+# Single key (set operations require value, delete operations forbid it):
+- type: set-title-data
+  key: GameVersion
+  value: "1.0.0"
 
-The `Commands/Leaderboard/` directory is split into three files:
-- **`LeaderboardCommands.cs`** — command definitions only (list, validate, sync)
-- **`ProgressionApiClient.cs`** — paginated PlayFab Progression API wrappers + enum mappers
-- **`SyncEngine.cs`** — sync plan building, printing, and applying logic
+# Batch set — values dictionary (set-* operations only):
+- type: set-title-data
+  values:
+    GameVersion: "1.0.0"
+    MatchmakingConfig: '{"maxPlayers": 10}'
 
-### PlayFab SDK
+# Batch delete — keys list (delete-* operations only):
+- type: delete-title-data
+  keys:
+    - GameVersion
+    - MatchmakingConfig
 
-Uses `PlayFabAllSDK` with static settings (`PlayFabSettings.staticSettings`). `PlayFabClientFactory.Configure()` must be called before any Admin API call. Leaderboard commands use the **Progression API** (`PlayFabProgressionAPI`) which additionally requires entity token authentication via `PlayFabClientFactory.AuthenticateEntityAsync()`.
+# Statistic definition — single-column shorthand (create-statistic/delete-statistic only):
+- type: create-statistic
+  name: PlayerScore
+  aggregationMethod: Sum       # Last | Min | Max | Sum
+  resetInterval: Month         # Manual | Hour | Day | Week | Month (default: Manual)
+  maxQueryableVersions: 3      # default: 1
+  entityType: title_player_account  # default: title_player_account
+
+# Statistic definition — multi-column form (mutually exclusive with aggregationMethod):
+- type: create-statistic
+  name: RaceResult
+  columns:
+    - name: Time
+      aggregationMethod: Min
+    - name: Distance
+      aggregationMethod: Max
+
+# Statistic deletion — name only, no other fields allowed:
+- type: delete-statistic
+  name: PlayerScore
+
+# Leaderboard definition (V2 Progression API) — columns are always explicit:
+- type: create-leaderboard
+  name: TopScores
+  sizeLimit: 1000              # default: 1000
+  resetInterval: Month         # Manual | Hour | Day | Week | Month (default: Manual)
+  maxQueryableVersions: 3      # default: 1
+  entityType: title_player_account  # default: title_player_account
+  leaderboardColumns:
+    - name: Score
+      sortDirection: Descending  # Ascending | Descending
+      linkedStatistic: PlayerScore          # optional — must be paired with linkedStatisticColumn
+      linkedStatisticColumn: Value          # the column within that statistic to source values from
+    - name: Rank
+      sortDirection: Ascending   # plain column, no link — mixing linked and plain columns is fine
+
+# Leaderboard deletion — name only, no other fields allowed:
+- type: delete-leaderboard
+  name: TopScores
+```
+
+A leaderboard column may optionally link to an existing statistic's column via `linkedStatistic`/`linkedStatisticColumn` — both must be set together or both omitted. PlayFab keeps linked columns in sync with the statistic automatically. The loader only validates field shape/pairing, not that the referenced statistic actually exists — PlayFab rejects a bad reference at `migrate up`.
+
+**Operation types:**
+- Implemented: `set-title-data`, `delete-title-data`, `set-title-internal-data`, `delete-title-internal-data`, `create-statistic`, `delete-statistic`, `create-leaderboard`, `delete-leaderboard`
+- Defined but not yet implemented: `reset-statistic`, `set-policy`
+
+`create-statistic`/`delete-statistic` and `create-leaderboard`/`delete-leaderboard` use PlayFab's Progression API (`PlayFabProgressionAPI`), which requires an entity token in addition to the secret key — `MigrateCommands` acquires this via `PlayFabAuth.RequireEntityCredentialsAsync` before running `up`/`down`.
+
+Constants and sets live in `Models/OperationTypes.cs`. To add a new operation type: add the constant, add it to `All` (and `Implemented` when ready), then add the dispatch case in `MigrationRunner.ExecuteSingleAsync` (key/value ops), `ExecuteStatisticStepAsync` (`OperationTypes.StatisticOperations`), or `ExecuteLeaderboardStepAsync` (`OperationTypes.LeaderboardOperations`).
+
+**Key infrastructure classes:**
+- `MigrationLoader` — discovers, parses (YamlDotNet), and validates YAML files (including batch form and statistic/leaderboard-step validation)
+- `MigrationLedgerService` — reads/writes the ledger JSON from PlayFab Title Internal Data
+- `MigrationRunner` — executes up/down steps via PlayFab Admin API (expands batch steps into individual API calls) and Progression API (statistic and leaderboard definitions), updates ledger. Every PlayFab call goes through `ExecuteWithThrottleRetryAsync`, which retries on `PlayFabErrorCode.APIClientRequestRateLimitExceeded` using the server-specified `PlayFabError.RetryAfterSeconds` cooldown (up to 5 attempts) rather than a guessed delay — large migrations (e.g. a generated batch of hundreds of statistics/leaderboards) can otherwise get throttled. `create-statistic`/`create-leaderboard` additionally treat "already exists" (`DuplicateStatisticName`/`LeaderboardNameConflict`) as success, so a `migrate up` retried after a partial failure resumes cleanly instead of failing immediately on the first already-created definition — the ledger is only written after *all* steps succeed, so a failed run's successfully-created definitions aren't otherwise recorded anywhere.
+- `PlayFabAuth` — resolves credentials, configures `PlayFabSettings.staticSettings`, and (`RequireEntityCredentialsAsync`) acquires the entity token Progression API calls need
+
+### Synthetic Players, Statistic Seeding & Leaderboard Readback
+
+`playfab players create/delete/list` manages synthetic test player accounts (ADR-0002), tracked per-title in `~/.playfab/synthetic-players-{TITLEID}.json` via `SyntheticPlayerService`/`SyntheticPlayerStore`. `create` sets the display name twice — `UpdateUserTitleDisplayNameAsync` (classic) and `PlayFabProfilesAPI.SetDisplayNameAsync` (Entity Profile) — because Progression/Leaderboard APIs read the Entity Profile name, not the classic one; this requires `RequireEntityCredentialsAsync`, not just the secret key.
+
+`playfab stats seed --statistic <name> --column <Name:min-max> [--column ...] (--all | --player-id <id> ...) [--count N]` writes randomized values into selected columns of an existing statistic for tracked synthetic players only (same safety rule as `players delete`: untracked IDs are rejected). PlayFab's `UpdateStatisticsAsync` takes a full positional `Scores` list per statistic (ordered to match the statistic's defined columns), not a named partial update — `StatisticSeedService` implements "seed only some columns" as **read-merge-write**: fetch the player's current scores (`GetStatisticsAsync`), overwrite only the targeted positions with a fresh `Random.Shared.Next(min, max + 1)`, and submit the full merged list back. Column existence is validated against the statistic's live `GetStatisticDefinitionAsync` result, not local migration YAML.
+
+`--count N` (default 1) repeats the write N times per player, each with an independently randomized value — e.g. to build up a `Sum` column's running total or try several `Min`/`Max` rolls. Whether a given `--column` run is still visible after N writes depends on its aggregation method: `Sum` accumulates, `Min`/`Max` settle to the extreme across all N, `Last` keeps only the final write (the other N-1 leave no trace). PlayFab's docs confirm `UpdateStatistics` aggregates incoming `Scores` per column's configured method rather than overwriting, so `ValidateUntouchedSumColumns` refuses to seed a statistic that has a `Sum` column *not* included in `--column` — resending that column's existing value every write would double it. `Min`/`Max`/`Last` columns left untouched are safe (resending the same value is always a no-op for those), so they aren't restricted.
+
+`playfab stats get --statistic <name> (--all | --player-id <id> ...)` reads a statistic's current stored value straight from `GetStatisticsAsync`, bypassing Game Manager — useful for verifying a seed actually landed when the UI doesn't seem to reflect it (e.g. to tell apart a real write-path bug from a Game Manager display/propagation gap). Shows each player's `Version` and per-column values (`—` where no value is recorded yet), plus the statistic's current definition version with a warning if any player's value version doesn't match it.
+
+`playfab stats definition --statistic <name>` displays the statistic's *definition* (not values) straight from `GetStatisticDefinitionAsync`: entity type, current version, reset interval, max queryable versions, created/last-reset timestamps, linked leaderboard names, and each column's aggregation method. The `linkedLeaderboardNames` field is the quickest way to check whether a statistic has any leaderboard attached to it at all.
+
+`playfab leaderboard get --name <name> [--page-size N] [--starting-position N] [--version N]` reads a leaderboard's ranked entries straight from `PlayFabProgressionAPI.GetLeaderboardAsync` (`Commands/Leaderboard/LeaderboardCommands.cs`) — unlike `stats get`, this isn't scoped to tracked synthetic players; it returns a page of the real ranking (rank, entity ID, display name, per-column scores), matching how Game Manager itself would read it.
+
+`playfab leaderboard definition --name <name>` displays the leaderboard's *definition* straight from `GetLeaderboardDefinitionAsync`: entity type, current version, size limit, reset interval, max queryable versions, created/last-reset timestamps, and each column's sort direction plus linked statistic (if any).
+
+### Credential Resolution (`CredentialResolver`)
+
+Priority: CLI args → env vars (`PLAYFAB_TITLE_ID`, `PLAYFAB_SECRET_KEY`) → config file (`~/.playfab/config.json`).
+
+### Key Dependencies
+
+- `System.CommandLine` 2.0 — CLI parsing
+- `PlayFabAllSDK` — PlayFab Admin APIs
+- `Spectre.Console` / `Spectre.Console.Json` — table and JSON output formatting
+- `YamlDotNet` — YAML migration file parsing
+- `xunit` — test framework
+
+## Branch & CI
+
+- Main branch: `master` (squash-merge only, requires `build` status check)
+- Release tags (`v*`) trigger GitHub Actions: self-contained binaries + NuGet package → GitHub Release.
 
 ## Testing
 
-Tests use xunit. The test project references the CLI project directly for unit testing config and command parsing logic. Integration tests against live PlayFab APIs are not included — they require real credentials.
+Tests use xunit and mirror the src folder structure (`Commands/`, `Infrastructure/`, `Models/`). Environment variable tests use `[Collection("Environment")]` for sequential execution. `CliConfig` tests use temp directories. `CredentialResolver` tests pass explicit `CliConfig` instances. `MigrationLoader` tests use temp directories with YAML files. Runner, LedgerService, and the live-API parts of `SyntheticPlayerService`/`StatisticSeedService` are not unit-tested (they make PlayFab API calls) — only their pure logic (e.g. `StatisticSeedService.ParseColumnSpec`/`ValidateColumns`/`MergeScores`) is.

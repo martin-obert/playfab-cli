@@ -1,93 +1,116 @@
 using System.CommandLine;
+using PlayFab;
 using PlayFab.Cli.Infrastructure;
-using PlayFab.Cli.Models;
+using PlayFab.ProgressionModels;
+using Spectre.Console;
+
+using SpectreTable = Spectre.Console.Table;
 
 namespace PlayFab.Cli.Commands.Leaderboard;
 
-/// <summary>Commands for managing PlayFab statistics and leaderboards via Progression API.</summary>
 public static class LeaderboardCommands
 {
-    /// <summary>Registers the 'leaderboard' command group with list, validate, and sync subcommands.</summary>
-    public static Command CreateGroup(Option<string?> globalTitleId, Option<string?> globalSecretKey, Option<OutputFormat> outputOption)
+    public static Command CreateGroup(GlobalOptions globalOptions)
     {
-        var group = new Command("leaderboard", "Manage PlayFab statistics and leaderboards from a local schema file");
-        group.Add(CreateListCommand(globalTitleId, globalSecretKey, outputOption));
-        group.Add(CreateValidateCommand());
-        group.Add(CreateSyncCommand(globalTitleId, globalSecretKey, outputOption));
+        var group = new Command("leaderboard", "Read back leaderboard rankings and definitions");
+        group.Add(CreateGetCommand(globalOptions));
+        group.Add(CreateDefinitionCommand(globalOptions));
         return group;
     }
 
-    private static Command CreateListCommand(Option<string?> globalTitleId, Option<string?> globalSecretKey, Option<OutputFormat> outputOption)
+    private static Command CreateGetCommand(GlobalOptions globalOptions)
     {
-        var command = new Command("list", "List all statistic and leaderboard definitions from PlayFab");
+        var nameOption = new Option<string>("--name")
+        {
+            Description = "Name of the leaderboard to display",
+            Required = true,
+        };
+        var pageSizeOption = new Option<uint>("--page-size")
+        {
+            Description = "Maximum number of ranked entries to return",
+            DefaultValueFactory = _ => 100,
+        };
+        var startingPositionOption = new Option<uint?>("--starting-position")
+        {
+            Description = "Zero-based rank to start reading from; omit to start at rank 0",
+        };
+        var versionOption = new Option<uint?>("--version")
+        {
+            Description = "Leaderboard version to read; omit for the current/live version",
+        };
+
+        var command = new Command("get", "Read back a leaderboard's ranked entries straight from PlayFab");
+        command.Add(nameOption);
+        command.Add(pageSizeOption);
+        command.Add(startingPositionOption);
+        command.Add(versionOption);
 
         command.SetAction(async parseResult =>
         {
-            var config = CliConfig.Load().MergeWith(
-                parseResult.GetValue(globalTitleId),
-                parseResult.GetValue(globalSecretKey));
-            await PlayFabClientFactory.AuthenticateEntityAsync(config);
+            var titleId = parseResult.GetValue(globalOptions.TitleId);
+            var secretKey = parseResult.GetValue(globalOptions.SecretKey);
+            var name = parseResult.GetRequiredValue(nameOption);
+            var pageSize = parseResult.GetValue(pageSizeOption);
+            var startingPosition = parseResult.GetValue(startingPositionOption);
+            var version = parseResult.GetValue(versionOption);
+            var output = parseResult.GetValue(globalOptions.Output);
 
-            var output = parseResult.GetValue(outputOption);
-            var stats = await ProgressionApiClient.FetchAllStatisticDefinitions();
-            var leaderboards = await ProgressionApiClient.FetchAllLeaderboardDefinitions();
+            await PlayFabAuth.RequireEntityCredentialsAsync(titleId, secretKey);
+
+            var result = await PlayFabProgressionAPI.GetLeaderboardAsync(new GetEntityLeaderboardRequest
+            {
+                LeaderboardName = name,
+                PageSize = pageSize,
+                StartingPosition = startingPosition,
+                Version = version,
+            });
+
+            if (result.Error is not null)
+            {
+                Console.Error.WriteLine($"Failed to get leaderboard '{name}': {result.Error.ErrorMessage}");
+                return;
+            }
+
+            var leaderboard = result.Result;
+            var columnNames = (leaderboard.Columns ?? []).Select(c => c.Name).ToList();
+            var rankings = leaderboard.Rankings ?? [];
 
             if (output == OutputFormat.Table)
             {
-                if (stats.Count > 0)
+                var table = new SpectreTable()
+                    .Title($"Leaderboard '{name}' (version {leaderboard.Version}, {leaderboard.EntryCount} entries)")
+                    .Border(TableBorder.Rounded);
+                table.AddColumn("Rank");
+                table.AddColumn("Entity ID");
+                table.AddColumn("Display Name");
+                foreach (var columnName in columnNames)
+                    table.AddColumn(columnName);
+
+                foreach (var entry in rankings)
                 {
-                    var rows = new Dictionary<string, string>();
-                    foreach (var s in stats)
-                    {
-                        var cols = string.Join(", ", (s.Columns ?? []).Select(c => $"{c.Name}({c.AggregationMethod})"));
-                        var reset = s.VersionConfiguration?.ResetInterval.ToString() ?? "Manual";
-                        rows[s.Name] = $"[{cols}] reset: {reset} v{s.Version}";
-                    }
-                    OutputHelper.WriteTable($"Statistics ({stats.Count})", rows);
+                    var scores = entry.Scores ?? [];
+                    var values = columnNames.Select((_, i) => i < scores.Count ? scores[i] : "—");
+                    table.AddRow([entry.Rank.ToString(), entry.Entity?.Id ?? "—", entry.DisplayName ?? "—", .. values]);
                 }
 
-                if (leaderboards.Count > 0)
-                {
-                    var rows = new Dictionary<string, string>();
-                    foreach (var lb in leaderboards)
-                    {
-                        var cols = string.Join(", ", (lb.Columns ?? []).Select(c =>
-                        {
-                            var linked = c.LinkedStatisticColumn is not null
-                                ? $"→{c.LinkedStatisticColumn.LinkedStatisticName}.{c.LinkedStatisticColumn.LinkedStatisticColumnName}"
-                                : "";
-                            return $"{c.Name}({c.SortDirection}){linked}";
-                        }));
-                        var reset = lb.VersionConfiguration?.ResetInterval.ToString() ?? "Manual";
-                        rows[lb.Name] = $"[{cols}] size: {lb.SizeLimit} reset: {reset} v{lb.Version}";
-                    }
-                    OutputHelper.WriteTable($"Leaderboards ({leaderboards.Count})", rows);
-                }
+                AnsiConsole.Write(table);
             }
             else
             {
                 OutputHelper.WriteJson(new
                 {
-                    statistics = stats.Select(s => new
+                    name,
+                    version = leaderboard.Version,
+                    entryCount = leaderboard.EntryCount,
+                    nextReset = leaderboard.NextReset,
+                    columns = columnNames,
+                    rankings = rankings.Select(r => new
                     {
-                        name = s.Name,
-                        columns = (s.Columns ?? []).Select(c => new { name = c.Name, aggregationMethod = c.AggregationMethod.ToString() }),
-                        resetInterval = s.VersionConfiguration?.ResetInterval.ToString() ?? "Manual",
-                        version = s.Version,
-                    }),
-                    leaderboards = leaderboards.Select(lb => new
-                    {
-                        name = lb.Name,
-                        columns = (lb.Columns ?? []).Select(c => new
-                        {
-                            name = c.Name,
-                            sortDirection = c.SortDirection.ToString(),
-                            linkedStatistic = c.LinkedStatisticColumn?.LinkedStatisticName,
-                            linkedStatisticColumn = c.LinkedStatisticColumn?.LinkedStatisticColumnName,
-                        }),
-                        sizeLimit = lb.SizeLimit,
-                        resetInterval = lb.VersionConfiguration?.ResetInterval.ToString() ?? "Manual",
-                        version = lb.Version,
+                        rank = r.Rank,
+                        entityId = r.Entity?.Id,
+                        displayName = r.DisplayName,
+                        scores = r.Scores,
+                        lastUpdated = r.LastUpdated,
                     }),
                 });
             }
@@ -96,122 +119,88 @@ public static class LeaderboardCommands
         return command;
     }
 
-    private static Command CreateValidateCommand()
+    private static Command CreateDefinitionCommand(GlobalOptions globalOptions)
     {
-        var fileOption = new Option<string>("--file") { Description = "Path to schema JSON file", DefaultValueFactory = _ => "leaderboards.json" };
-
-        var command = new Command("validate", "Validate a local schema file");
-        command.Add(fileOption);
-
-        command.SetAction(parseResult =>
+        var nameOption = new Option<string>("--name")
         {
-            var filePath = parseResult.GetRequiredValue(fileOption);
+            Description = "Name of the leaderboard to display",
+            Required = true,
+        };
 
-            LeaderboardSchema schema;
-            try
-            {
-                schema = LeaderboardSchema.LoadFromFile(filePath);
-            }
-            catch (Exception ex)
-            {
-                Console.Error.WriteLine($"Failed to load schema: {ex.Message}");
-                Environment.ExitCode = 1;
-                return;
-            }
-
-            var errors = schema.Validate();
-            if (errors.Count > 0)
-            {
-                Console.Error.WriteLine("Validation errors:");
-                foreach (var error in errors)
-                    Console.Error.WriteLine($"  - {error}");
-                Environment.ExitCode = 1;
-                return;
-            }
-
-            Console.WriteLine($"Valid: {schema.Statistics.Count} statistic(s), {schema.Leaderboards.Count} leaderboard(s) in {filePath}");
-        });
-
-        return command;
-    }
-
-    private static Command CreateSyncCommand(Option<string?> globalTitleId, Option<string?> globalSecretKey, Option<OutputFormat> outputOption)
-    {
-        var fileOption = new Option<string>("--file") { Description = "Path to schema JSON file", DefaultValueFactory = _ => "leaderboards.json" };
-        var nameOption = new Option<string?>("--name") { Description = "Sync only the named statistic or leaderboard" };
-        var applyOption = new Option<bool>("--apply") { Description = "Apply changes (default is dry-run)", DefaultValueFactory = _ => false };
-
-        var command = new Command("sync", "Compare local schema with PlayFab and optionally apply changes");
-        command.Add(fileOption);
+        var command = new Command("definition", "Display a leaderboard's definition (columns, sort/link config, versioning) straight from PlayFab");
         command.Add(nameOption);
-        command.Add(applyOption);
 
         command.SetAction(async parseResult =>
         {
-            var filePath = parseResult.GetRequiredValue(fileOption);
-            var nameFilter = parseResult.GetValue(nameOption);
-            var apply = parseResult.GetValue(applyOption);
-            var output = parseResult.GetValue(outputOption);
+            var titleId = parseResult.GetValue(globalOptions.TitleId);
+            var secretKey = parseResult.GetValue(globalOptions.SecretKey);
+            var name = parseResult.GetRequiredValue(nameOption);
+            var output = parseResult.GetValue(globalOptions.Output);
 
-            LeaderboardSchema schema;
-            try
+            await PlayFabAuth.RequireEntityCredentialsAsync(titleId, secretKey);
+
+            var result = await PlayFabProgressionAPI.GetLeaderboardDefinitionAsync(new GetLeaderboardDefinitionRequest { Name = name });
+            if (result.Error is not null)
             {
-                schema = LeaderboardSchema.LoadFromFile(filePath);
-            }
-            catch (Exception ex)
-            {
-                Console.Error.WriteLine($"Failed to load schema: {ex.Message}");
-                Environment.ExitCode = 1;
+                Console.Error.WriteLine($"Failed to get leaderboard definition '{name}': {result.Error.ErrorMessage}");
                 return;
             }
 
-            var errors = schema.Validate();
-            if (errors.Count > 0)
+            var definition = result.Result;
+            var columns = definition.Columns ?? [];
+
+            if (output == OutputFormat.Table)
             {
-                Console.Error.WriteLine("Schema validation errors:");
-                foreach (var error in errors)
-                    Console.Error.WriteLine($"  - {error}");
-                Environment.ExitCode = 1;
-                return;
+                var table = new SpectreTable()
+                    .Title($"Leaderboard '{name}'")
+                    .Border(TableBorder.Rounded);
+                table.AddColumn("Field");
+                table.AddColumn("Value");
+                table.AddRow("Entity Type", definition.EntityType ?? "—");
+                table.AddRow("Current Version", definition.Version.ToString());
+                table.AddRow("Size Limit", definition.SizeLimit.ToString());
+                table.AddRow("Reset Interval", definition.VersionConfiguration?.ResetInterval.ToString() ?? "—");
+                table.AddRow("Max Queryable Versions", definition.VersionConfiguration?.MaxQueryableVersions.ToString() ?? "—");
+                table.AddRow("Created", definition.Created.ToString("o"));
+                table.AddRow("Last Reset", definition.LastResetTime?.ToString("o") ?? "—");
+                AnsiConsole.Write(table);
+
+                var columnsTable = new SpectreTable()
+                    .Title("Columns")
+                    .Border(TableBorder.Rounded);
+                columnsTable.AddColumn("Name");
+                columnsTable.AddColumn("Sort Direction");
+                columnsTable.AddColumn("Linked Statistic");
+                foreach (var column in columns)
+                {
+                    var linked = column.LinkedStatisticColumn is not null
+                        ? $"{column.LinkedStatisticColumn.LinkedStatisticName}.{column.LinkedStatisticColumn.LinkedStatisticColumnName}"
+                        : "(none)";
+                    columnsTable.AddRow(column.Name, column.SortDirection.ToString(), linked);
+                }
+                AnsiConsole.Write(columnsTable);
             }
-
-            var config = CliConfig.Load().MergeWith(
-                parseResult.GetValue(globalTitleId),
-                parseResult.GetValue(globalSecretKey));
-            await PlayFabClientFactory.AuthenticateEntityAsync(config);
-
-            var remoteStats = await ProgressionApiClient.FetchAllStatisticDefinitions();
-            var remoteStatLookup = remoteStats.ToDictionary(s => s.Name, StringComparer.OrdinalIgnoreCase);
-
-            var remoteLeaderboards = await ProgressionApiClient.FetchAllLeaderboardDefinitions();
-            var remoteLbLookup = remoteLeaderboards.ToDictionary(lb => lb.Name, StringComparer.OrdinalIgnoreCase);
-
-            var localStats = SyncEngine.FilterByName(schema.Statistics, s => s.Name, nameFilter);
-            var localLbs = SyncEngine.FilterByName(schema.Leaderboards, lb => lb.Name, nameFilter);
-
-            if (nameFilter is not null && localStats.Count == 0 && localLbs.Count == 0)
+            else
             {
-                Console.Error.WriteLine($"'{nameFilter}' not found in schema file.");
-                Environment.ExitCode = 1;
-                return;
+                OutputHelper.WriteJson(new
+                {
+                    name,
+                    entityType = definition.EntityType,
+                    version = definition.Version,
+                    sizeLimit = definition.SizeLimit,
+                    resetInterval = definition.VersionConfiguration?.ResetInterval.ToString(),
+                    maxQueryableVersions = definition.VersionConfiguration?.MaxQueryableVersions,
+                    created = definition.Created,
+                    lastResetTime = definition.LastResetTime,
+                    columns = columns.Select(c => new
+                    {
+                        name = c.Name,
+                        sortDirection = c.SortDirection.ToString(),
+                        linkedStatistic = c.LinkedStatisticColumn?.LinkedStatisticName,
+                        linkedStatisticColumn = c.LinkedStatisticColumn?.LinkedStatisticColumnName,
+                    }),
+                });
             }
-
-            var statPlan = SyncEngine.BuildStatisticSyncPlan(localStats, remoteStatLookup);
-            var lbPlan = SyncEngine.BuildLeaderboardSyncPlan(localLbs, remoteLbLookup);
-
-            SyncEngine.PrintSyncPlan(statPlan, lbPlan, output);
-
-            var hasChanges = statPlan.Creates.Count + statPlan.Updates.Count + lbPlan.Creates.Count + lbPlan.Updates.Count > 0;
-
-            if (!apply)
-            {
-                if (hasChanges)
-                    Console.WriteLine("\nRun with --apply to push changes.");
-                return;
-            }
-
-            await SyncEngine.ApplyStatisticPlan(statPlan);
-            await SyncEngine.ApplyLeaderboardPlan(lbPlan);
         });
 
         return command;

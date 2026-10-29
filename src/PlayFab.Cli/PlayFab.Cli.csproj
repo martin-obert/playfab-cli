@@ -2,32 +2,26 @@
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <TargetFramework>net10.0</TargetFramework>
-    <ImplicitUsings>enable</ImplicitUsings>
-    <Nullable>enable</Nullable>
     <PackAsTool>true</PackAsTool>
     <ToolCommandName>playfab</ToolCommandName>
     <PackageId>PlayFab.Cli</PackageId>
-    <Version>0.1.0</Version>
-    <Description>CLI tool for automating PlayFab operations</Description>
+    <Version>0.2.0</Version>
+    <Description>CLI tool for configuring PlayFab titles from declarative configuration files</Description>
     <Authors>martin-obert</Authors>
     <PackageProjectUrl>https://github.com/martin-obert/playfab-cli</PackageProjectUrl>
     <RepositoryUrl>https://github.com/martin-obert/playfab-cli.git</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
-    <PackageReadmeFile>README.md</PackageReadmeFile>
-    <PackageTags>playfab;cli;gamedev;automation</PackageTags>
+    <PackageTags>playfab;cli;gamedev;automation;infrastructure-as-code</PackageTags>
   </PropertyGroup>
-
-  <ItemGroup>
-    <None Include="..\..\README.md" Pack="true" PackagePath="\" />
-  </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="System.CommandLine" Version="2.0.*" />
     <PackageReference Include="PlayFabAllSDK" Version="1.*" />
     <PackageReference Include="Spectre.Console" Version="0.*" />
     <PackageReference Include="Spectre.Console.Json" Version="0.*" />
+    <PackageReference Include="Bogus" Version="35.*" />
+    <PackageReference Include="YamlDotNet" Version="16.*" />
   </ItemGroup>
 
 </Project>

@@ -1,22 +1,41 @@
 using System.CommandLine;
 using PlayFab.Cli.Commands.Config;
 using PlayFab.Cli.Commands.Leaderboard;
-using PlayFab.Cli.Commands.Policy;
-using PlayFab.Cli.Commands.TitleData;
+using PlayFab.Cli.Commands.Migrate;
+using PlayFab.Cli.Commands.Players;
+using PlayFab.Cli.Commands.Stats;
 using PlayFab.Cli.Infrastructure;
 
-var titleIdOption = new Option<string?>("--title-id") { Description = "PlayFab Title ID (overrides env/config)", Recursive = true };
-var secretKeyOption = new Option<string?>("--secret-key") { Description = "PlayFab Developer Secret Key (overrides env/config)", Recursive = true };
-var outputOption = new Option<OutputFormat>("--output", "-o") { Description = "Output format", DefaultValueFactory = _ => OutputFormat.Json, Recursive = true };
+var titleIdOption = new Option<string?>("--title-id")
+{
+    Description = "PlayFab Title ID (overrides env/config)",
+    Recursive = true,
+};
 
-var rootCommand = new RootCommand("PlayFab CLI — automate PlayFab operations");
+var secretKeyOption = new Option<string?>("--secret-key")
+{
+    Description = "PlayFab Developer Secret Key (overrides env/config)",
+    Recursive = true,
+};
+
+var outputOption = new Option<OutputFormat>("--output", "-o")
+{
+    Description = "Output format",
+    DefaultValueFactory = _ => OutputFormat.Json,
+    Recursive = true,
+};
+
+var globalOptions = new GlobalOptions(titleIdOption, secretKeyOption, outputOption);
+
+var rootCommand = new RootCommand("PlayFab CLI — configure PlayFab titles from declarative configuration files");
 rootCommand.Add(titleIdOption);
 rootCommand.Add(secretKeyOption);
 rootCommand.Add(outputOption);
-rootCommand.Add(ConfigCommands.CreateGroup(titleIdOption, secretKeyOption, outputOption));
-rootCommand.Add(LeaderboardCommands.CreateGroup(titleIdOption, secretKeyOption, outputOption));
-rootCommand.Add(PolicyCommands.CreateGroup(titleIdOption, secretKeyOption, outputOption));
-rootCommand.Add(TitleDataCommands.CreateGroup(titleIdOption, secretKeyOption, outputOption));
+rootCommand.Add(ConfigCommands.CreateGroup(globalOptions));
+rootCommand.Add(MigrateCommands.CreateGroup(globalOptions));
+rootCommand.Add(PlayersCommands.CreateGroup(globalOptions));
+rootCommand.Add(StatsCommands.CreateGroup(globalOptions));
+rootCommand.Add(LeaderboardCommands.CreateGroup(globalOptions));
 
 var parseResult = rootCommand.Parse(args);
 return await parseResult.InvokeAsync();
