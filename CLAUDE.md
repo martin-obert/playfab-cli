@@ -48,7 +48,7 @@ public static Command CreateGroup(GlobalOptions globalOptions)
 
 Migration files use YAML format with timestamp-prefixed filenames (`20261028120000_add_data.yml`). The ID is parsed from the filename. Each file has `description`, `up` (list of steps), and `down` (list of steps).
 
-**Step syntax** — key/value operations (`*-title-data`) use one of three mutually exclusive forms; statistic operations (`create-statistic`/`delete-statistic`) use a structured, name-based form instead:
+**Step syntax** — key/value operations (`*-title-data`) use one of three mutually exclusive forms; statistic and leaderboard operations use a structured, name-based form instead:
 
 ```yaml
 # Single key (set operations require value, delete operations forbid it):
@@ -88,20 +88,37 @@ Migration files use YAML format with timestamp-prefixed filenames (`202610281200
 # Statistic deletion — name only, no other fields allowed:
 - type: delete-statistic
   name: PlayerScore
+
+# Leaderboard definition (V2 Progression API) — columns are always explicit:
+- type: create-leaderboard
+  name: TopScores
+  sizeLimit: 1000              # default: 1000
+  resetInterval: Month         # Manual | Hour | Day | Week | Month (default: Manual)
+  maxQueryableVersions: 3      # default: 1
+  entityType: title_player_account  # default: title_player_account
+  leaderboardColumns:
+    - name: Score
+      sortDirection: Descending  # Ascending | Descending
+
+# Leaderboard deletion — name only, no other fields allowed:
+- type: delete-leaderboard
+  name: TopScores
 ```
 
+Leaderboard columns linked to a statistic (`linkedStatistic`/`linkedStatisticColumn`) are not supported yet — planned follow-up.
+
 **Operation types:**
-- Implemented: `set-title-data`, `delete-title-data`, `set-title-internal-data`, `delete-title-internal-data`, `create-statistic`, `delete-statistic`
-- Defined but not yet implemented: `reset-statistic`, `create-leaderboard`, `delete-leaderboard`, `set-policy`
+- Implemented: `set-title-data`, `delete-title-data`, `set-title-internal-data`, `delete-title-internal-data`, `create-statistic`, `delete-statistic`, `create-leaderboard`, `delete-leaderboard`
+- Defined but not yet implemented: `reset-statistic`, `set-policy`
 
-`create-statistic`/`delete-statistic` use PlayFab's Progression API (`PlayFabProgressionAPI`), which requires an entity token in addition to the secret key — `MigrateCommands` acquires this via `PlayFabAuth.RequireEntityCredentialsAsync` before running `up`/`down`.
+`create-statistic`/`delete-statistic` and `create-leaderboard`/`delete-leaderboard` use PlayFab's Progression API (`PlayFabProgressionAPI`), which requires an entity token in addition to the secret key — `MigrateCommands` acquires this via `PlayFabAuth.RequireEntityCredentialsAsync` before running `up`/`down`.
 
-Constants and sets live in `Models/OperationTypes.cs`. To add a new operation type: add the constant, add it to `All` (and `Implemented` when ready), then add the dispatch case in `MigrationRunner.ExecuteSingleAsync` (key/value ops) or `ExecuteStatisticStepAsync` (structured ops in `OperationTypes.StatisticOperations`).
+Constants and sets live in `Models/OperationTypes.cs`. To add a new operation type: add the constant, add it to `All` (and `Implemented` when ready), then add the dispatch case in `MigrationRunner.ExecuteSingleAsync` (key/value ops), `ExecuteStatisticStepAsync` (`OperationTypes.StatisticOperations`), or `ExecuteLeaderboardStepAsync` (`OperationTypes.LeaderboardOperations`).
 
 **Key infrastructure classes:**
-- `MigrationLoader` — discovers, parses (YamlDotNet), and validates YAML files (including batch form and statistic-step validation)
+- `MigrationLoader` — discovers, parses (YamlDotNet), and validates YAML files (including batch form and statistic/leaderboard-step validation)
 - `MigrationLedgerService` — reads/writes the ledger JSON from PlayFab Title Internal Data
-- `MigrationRunner` — executes up/down steps via PlayFab Admin API (expands batch steps into individual API calls) and Progression API (statistic definitions), updates ledger
+- `MigrationRunner` — executes up/down steps via PlayFab Admin API (expands batch steps into individual API calls) and Progression API (statistic and leaderboard definitions), updates ledger
 - `PlayFabAuth` — resolves credentials, configures `PlayFabSettings.staticSettings`, and (`RequireEntityCredentialsAsync`) acquires the entity token Progression API calls need
 
 ### Credential Resolution (`CredentialResolver`)

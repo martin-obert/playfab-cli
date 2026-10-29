@@ -15,13 +15,19 @@ public sealed class MigrationStep
     public List<string>? Keys { get; init; }
     public Dictionary<string, string>? Values { get; init; }
 
-    // Statistic-definition fields (create-statistic / delete-statistic)
+    // Statistic/leaderboard-definition fields (create-statistic/delete-statistic, create-leaderboard/delete-leaderboard)
     public string? Name { get; init; }
     public string? EntityType { get; init; }
-    public string? AggregationMethod { get; init; }
     public string? ResetInterval { get; init; }
     public int? MaxQueryableVersions { get; init; }
+
+    // Statistic-definition fields (create-statistic / delete-statistic)
+    public string? AggregationMethod { get; init; }
     public List<StatisticColumnStep>? Columns { get; init; }
+
+    // Leaderboard-definition fields (create-leaderboard / delete-leaderboard)
+    public int? SizeLimit { get; init; }
+    public List<LeaderboardColumnStep>? LeaderboardColumns { get; init; }
 }
 
 /// <summary>A single column within a multi-column statistic definition.</summary>
@@ -29,4 +35,11 @@ public sealed class StatisticColumnStep
 {
     public required string Name { get; init; }
     public required string AggregationMethod { get; init; }
+}
+
+/// <summary>A single column within a leaderboard definition.</summary>
+public sealed class LeaderboardColumnStep
+{
+    public required string Name { get; init; }
+    public required string SortDirection { get; init; }
 }

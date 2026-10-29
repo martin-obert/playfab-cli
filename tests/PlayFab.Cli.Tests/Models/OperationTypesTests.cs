@@ -41,14 +41,20 @@ public class OperationTypesTests
     {
         Assert.Contains(OperationTypes.CreateStatistic, OperationTypes.Implemented);
         Assert.Contains(OperationTypes.DeleteStatistic, OperationTypes.Implemented);
-        Assert.Equal(6, OperationTypes.Implemented.Count);
+    }
+
+    [Fact]
+    public void Implemented_ContainsLeaderboardOperations()
+    {
+        Assert.Contains(OperationTypes.CreateLeaderboard, OperationTypes.Implemented);
+        Assert.Contains(OperationTypes.DeleteLeaderboard, OperationTypes.Implemented);
+        Assert.Equal(8, OperationTypes.Implemented.Count);
     }
 
     [Fact]
     public void Implemented_DoesNotContainFutureTypes()
     {
         Assert.DoesNotContain(OperationTypes.ResetStatistic, OperationTypes.Implemented);
-        Assert.DoesNotContain(OperationTypes.CreateLeaderboard, OperationTypes.Implemented);
         Assert.DoesNotContain(OperationTypes.SetPolicy, OperationTypes.Implemented);
     }
 
@@ -58,5 +64,13 @@ public class OperationTypesTests
         Assert.Contains(OperationTypes.CreateStatistic, OperationTypes.StatisticOperations);
         Assert.Contains(OperationTypes.DeleteStatistic, OperationTypes.StatisticOperations);
         Assert.Equal(2, OperationTypes.StatisticOperations.Count);
+    }
+
+    [Fact]
+    public void LeaderboardOperations_ContainsExactlyCreateAndDelete()
+    {
+        Assert.Contains(OperationTypes.CreateLeaderboard, OperationTypes.LeaderboardOperations);
+        Assert.Contains(OperationTypes.DeleteLeaderboard, OperationTypes.LeaderboardOperations);
+        Assert.Equal(2, OperationTypes.LeaderboardOperations.Count);
     }
 }

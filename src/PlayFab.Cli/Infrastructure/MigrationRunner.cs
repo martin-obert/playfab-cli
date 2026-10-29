@@ -75,6 +75,12 @@ public static class MigrationRunner
             return;
         }
 
+        if (OperationTypes.LeaderboardOperations.Contains(step.Type))
+        {
+            await ExecuteLeaderboardStepAsync(step);
+            return;
+        }
+
         if (step.Keys is not null)
         {
             foreach (var key in step.Keys)
@@ -147,11 +153,7 @@ public static class MigrationRunner
             Name = step.Name!,
             EntityType = step.EntityType ?? "title_player_account",
             Columns = columns,
-            VersionConfiguration = new VersionConfiguration
-            {
-                ResetInterval = ParseResetInterval(step.ResetInterval),
-                MaxQueryableVersions = step.MaxQueryableVersions ?? 1,
-            },
+            VersionConfiguration = BuildVersionConfiguration(step),
         });
 
         if (result.Error is not null)
@@ -165,11 +167,61 @@ public static class MigrationRunner
             throw new InvalidOperationException($"DeleteStatisticDefinition failed for '{name}': {result.Error.ErrorMessage}");
     }
 
+    private static async Task ExecuteLeaderboardStepAsync(MigrationStep step)
+    {
+        switch (step.Type)
+        {
+            case OperationTypes.CreateLeaderboard:
+                await CreateLeaderboardDefinitionAsync(step);
+                break;
+            case OperationTypes.DeleteLeaderboard:
+                await DeleteLeaderboardDefinitionAsync(step.Name!);
+                break;
+        }
+    }
+
+    private static async Task CreateLeaderboardDefinitionAsync(MigrationStep step)
+    {
+        var columns = step.LeaderboardColumns!.Select(c => new LeaderboardColumn
+        {
+            Name = c.Name,
+            SortDirection = ParseSortDirection(c.SortDirection),
+        }).ToList();
+
+        var result = await PlayFabProgressionAPI.CreateLeaderboardDefinitionAsync(new CreateLeaderboardDefinitionRequest
+        {
+            Name = step.Name!,
+            EntityType = step.EntityType ?? "title_player_account",
+            Columns = columns,
+            SizeLimit = step.SizeLimit ?? 1000,
+            VersionConfiguration = BuildVersionConfiguration(step),
+        });
+
+        if (result.Error is not null)
+            throw new InvalidOperationException($"CreateLeaderboardDefinition failed for '{step.Name}': {result.Error.ErrorMessage}");
+    }
+
+    private static async Task DeleteLeaderboardDefinitionAsync(string name)
+    {
+        var result = await PlayFabProgressionAPI.DeleteLeaderboardDefinitionAsync(new DeleteLeaderboardDefinitionRequest { Name = name });
+        if (result.Error is not null)
+            throw new InvalidOperationException($"DeleteLeaderboardDefinition failed for '{name}': {result.Error.ErrorMessage}");
+    }
+
     private static PlayFab.ProgressionModels.StatisticAggregationMethod ParseAggregationMethod(string? value) =>
         Enum.Parse<PlayFab.ProgressionModels.StatisticAggregationMethod>(value ?? "Last", ignoreCase: true);
 
     private static PlayFab.ProgressionModels.ResetInterval ParseResetInterval(string? value) =>
         Enum.Parse<PlayFab.ProgressionModels.ResetInterval>(value ?? "Manual", ignoreCase: true);
+
+    private static LeaderboardSortDirection ParseSortDirection(string value) =>
+        Enum.Parse<LeaderboardSortDirection>(value, ignoreCase: true);
+
+    private static VersionConfiguration BuildVersionConfiguration(MigrationStep step) => new()
+    {
+        ResetInterval = ParseResetInterval(step.ResetInterval),
+        MaxQueryableVersions = step.MaxQueryableVersions ?? 1,
+    };
 
     private static async Task SetTitleDataAsync(string key, string? value)
     {

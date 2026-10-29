@@ -620,6 +620,248 @@ public class MigrationLoaderTests : IDisposable
         Assert.Contains(errors, e => e.Contains("cannot be used with 'delete-statistic'"));
     }
 
+    [Fact]
+    public void Validate_CreateLeaderboard_Valid()
+    {
+        var path = WriteYaml("20261028120000_test.yml", """
+            description: "test"
+            up:
+              - type: create-leaderboard
+                name: TopScores
+                leaderboardColumns:
+                  - name: Score
+                    sortDirection: Descending
+            down:
+              - type: delete-leaderboard
+                name: TopScores
+            """);
+        var migration = MigrationLoader.LoadSingle(path);
+
+        var errors = MigrationLoader.Validate(migration);
+
+        Assert.Empty(errors);
+    }
+
+    [Fact]
+    public void Validate_CreateLeaderboardMultiColumn_Valid()
+    {
+        var path = WriteYaml("20261028120000_test.yml", """
+            description: "test"
+            up:
+              - type: create-leaderboard
+                name: RaceResult
+                sizeLimit: 500
+                resetInterval: Week
+                maxQueryableVersions: 2
+                leaderboardColumns:
+                  - name: Time
+                    sortDirection: Ascending
+                  - name: Distance
+                    sortDirection: Descending
+            down:
+              - type: delete-leaderboard
+                name: RaceResult
+            """);
+        var migration = MigrationLoader.LoadSingle(path);
+
+        var errors = MigrationLoader.Validate(migration);
+
+        Assert.Empty(errors);
+    }
+
+    [Fact]
+    public void Validate_CreateLeaderboardMissingName_ReturnsError()
+    {
+        var path = WriteYaml("20261028120000_test.yml", """
+            description: "test"
+            up:
+              - type: create-leaderboard
+                leaderboardColumns:
+                  - name: Score
+                    sortDirection: Descending
+            down: []
+            """);
+        var migration = MigrationLoader.LoadSingle(path);
+
+        var errors = MigrationLoader.Validate(migration);
+
+        Assert.Contains(errors, e => e.Contains("Name must not be empty"));
+    }
+
+    [Fact]
+    public void Validate_CreateLeaderboardEmptyColumns_ReturnsError()
+    {
+        var path = WriteYaml("20261028120000_test.yml", """
+            description: "test"
+            up:
+              - type: create-leaderboard
+                name: TopScores
+                leaderboardColumns: []
+            down: []
+            """);
+        var migration = MigrationLoader.LoadSingle(path);
+
+        var errors = MigrationLoader.Validate(migration);
+
+        Assert.Contains(errors, e => e.Contains("'leaderboardColumns' must not be empty"));
+    }
+
+    [Fact]
+    public void Validate_CreateLeaderboardMissingColumns_ReturnsError()
+    {
+        var path = WriteYaml("20261028120000_test.yml", """
+            description: "test"
+            up:
+              - type: create-leaderboard
+                name: TopScores
+            down: []
+            """);
+        var migration = MigrationLoader.LoadSingle(path);
+
+        var errors = MigrationLoader.Validate(migration);
+
+        Assert.Contains(errors, e => e.Contains("'leaderboardColumns' must not be empty"));
+    }
+
+    [Fact]
+    public void Validate_CreateLeaderboardDuplicateColumnNames_ReturnsError()
+    {
+        var path = WriteYaml("20261028120000_test.yml", """
+            description: "test"
+            up:
+              - type: create-leaderboard
+                name: TopScores
+                leaderboardColumns:
+                  - name: Score
+                    sortDirection: Descending
+                  - name: Score
+                    sortDirection: Ascending
+            down: []
+            """);
+        var migration = MigrationLoader.LoadSingle(path);
+
+        var errors = MigrationLoader.Validate(migration);
+
+        Assert.Contains(errors, e => e.Contains("duplicate leaderboard column name"));
+    }
+
+    [Fact]
+    public void Validate_CreateLeaderboardInvalidSortDirection_ReturnsError()
+    {
+        var path = WriteYaml("20261028120000_test.yml", """
+            description: "test"
+            up:
+              - type: create-leaderboard
+                name: TopScores
+                leaderboardColumns:
+                  - name: Score
+                    sortDirection: Sideways
+            down: []
+            """);
+        var migration = MigrationLoader.LoadSingle(path);
+
+        var errors = MigrationLoader.Validate(migration);
+
+        Assert.Contains(errors, e => e.Contains("invalid sortDirection"));
+    }
+
+    [Fact]
+    public void Validate_CreateLeaderboardInvalidResetInterval_ReturnsError()
+    {
+        var path = WriteYaml("20261028120000_test.yml", """
+            description: "test"
+            up:
+              - type: create-leaderboard
+                name: TopScores
+                resetInterval: Fortnight
+                leaderboardColumns:
+                  - name: Score
+                    sortDirection: Descending
+            down: []
+            """);
+        var migration = MigrationLoader.LoadSingle(path);
+
+        var errors = MigrationLoader.Validate(migration);
+
+        Assert.Contains(errors, e => e.Contains("Invalid resetInterval"));
+    }
+
+    [Fact]
+    public void Validate_CreateLeaderboardInvalidSizeLimit_ReturnsError()
+    {
+        var path = WriteYaml("20261028120000_test.yml", """
+            description: "test"
+            up:
+              - type: create-leaderboard
+                name: TopScores
+                sizeLimit: 0
+                leaderboardColumns:
+                  - name: Score
+                    sortDirection: Descending
+            down: []
+            """);
+        var migration = MigrationLoader.LoadSingle(path);
+
+        var errors = MigrationLoader.Validate(migration);
+
+        Assert.Contains(errors, e => e.Contains("sizeLimit must be >= 1"));
+    }
+
+    [Fact]
+    public void Validate_CreateLeaderboardWithStrayKey_ReturnsError()
+    {
+        var path = WriteYaml("20261028120000_test.yml", """
+            description: "test"
+            up:
+              - type: create-leaderboard
+                name: TopScores
+                key: ShouldNotBeHere
+                leaderboardColumns:
+                  - name: Score
+                    sortDirection: Descending
+            down: []
+            """);
+        var migration = MigrationLoader.LoadSingle(path);
+
+        var errors = MigrationLoader.Validate(migration);
+
+        Assert.Contains(errors, e => e.Contains("'key', 'keys', and 'values' cannot be used"));
+    }
+
+    [Fact]
+    public void Validate_DeleteLeaderboardMissingName_ReturnsError()
+    {
+        var path = WriteYaml("20261028120000_test.yml", """
+            description: "test"
+            up:
+              - type: delete-leaderboard
+            down: []
+            """);
+        var migration = MigrationLoader.LoadSingle(path);
+
+        var errors = MigrationLoader.Validate(migration);
+
+        Assert.Contains(errors, e => e.Contains("Name must not be empty"));
+    }
+
+    [Fact]
+    public void Validate_DeleteLeaderboardWithStrayField_ReturnsError()
+    {
+        var path = WriteYaml("20261028120000_test.yml", """
+            description: "test"
+            up:
+              - type: delete-leaderboard
+                name: TopScores
+                sizeLimit: 1000
+            down: []
+            """);
+        var migration = MigrationLoader.LoadSingle(path);
+
+        var errors = MigrationLoader.Validate(migration);
+
+        Assert.Contains(errors, e => e.Contains("cannot be used with 'delete-leaderboard'"));
+    }
+
     private string WriteYaml(string filename, string content)
     {
         var path = Path.Combine(_tempDir, filename);

@@ -96,6 +96,12 @@ public static partial class MigrationLoader
                 continue;
             }
 
+            if (OperationTypes.LeaderboardOperations.Contains(step.Type))
+            {
+                ValidateLeaderboardStep(step, prefix, errors);
+                continue;
+            }
+
             var hasKey = step.Key is not null;
             var hasKeys = step.Keys is not null;
             var hasValues = step.Values is not null;
@@ -175,14 +181,36 @@ public static partial class MigrationLoader
 
     private static readonly HashSet<string> ValidAggregationMethods = new(StringComparer.OrdinalIgnoreCase) { "Last", "Min", "Max", "Sum" };
     private static readonly HashSet<string> ValidResetIntervals = new(StringComparer.OrdinalIgnoreCase) { "Manual", "Hour", "Day", "Week", "Month" };
+    private static readonly HashSet<string> ValidSortDirections = new(StringComparer.OrdinalIgnoreCase) { "Ascending", "Descending" };
 
-    private static void ValidateStatisticStep(MigrationStep step, string prefix, List<string> errors)
+    private static void ValidateName(MigrationStep step, string prefix, List<string> errors)
     {
         if (string.IsNullOrWhiteSpace(step.Name))
             errors.Add($"{prefix}: Name must not be empty.");
+    }
 
+    private static void ValidateNoKeyValueFields(MigrationStep step, string prefix, List<string> errors)
+    {
         if (step.Key is not null || step.Keys is not null || step.Values is not null)
             errors.Add($"{prefix}: 'key', 'keys', and 'values' cannot be used with '{step.Type}'.");
+    }
+
+    private static void ValidateResetInterval(MigrationStep step, string prefix, List<string> errors)
+    {
+        if (step.ResetInterval is not null && !ValidResetIntervals.Contains(step.ResetInterval))
+            errors.Add($"{prefix}: Invalid resetInterval '{step.ResetInterval}'.");
+    }
+
+    private static void ValidateMaxQueryableVersions(MigrationStep step, string prefix, List<string> errors)
+    {
+        if (step.MaxQueryableVersions is not null && step.MaxQueryableVersions < 1)
+            errors.Add($"{prefix}: maxQueryableVersions must be >= 1.");
+    }
+
+    private static void ValidateStatisticStep(MigrationStep step, string prefix, List<string> errors)
+    {
+        ValidateName(step, prefix, errors);
+        ValidateNoKeyValueFields(step, prefix, errors);
 
         if (step.Type == OperationTypes.DeleteStatistic)
         {
@@ -233,11 +261,54 @@ public static partial class MigrationLoader
             }
         }
 
-        if (step.ResetInterval is not null && !ValidResetIntervals.Contains(step.ResetInterval))
-            errors.Add($"{prefix}: Invalid resetInterval '{step.ResetInterval}'.");
+        ValidateResetInterval(step, prefix, errors);
+        ValidateMaxQueryableVersions(step, prefix, errors);
+    }
 
-        if (step.MaxQueryableVersions is not null && step.MaxQueryableVersions < 1)
-            errors.Add($"{prefix}: maxQueryableVersions must be >= 1.");
+    private static void ValidateLeaderboardStep(MigrationStep step, string prefix, List<string> errors)
+    {
+        ValidateName(step, prefix, errors);
+        ValidateNoKeyValueFields(step, prefix, errors);
+
+        if (step.Type == OperationTypes.DeleteLeaderboard)
+        {
+            if (step.EntityType is not null || step.SizeLimit is not null || step.ResetInterval is not null
+                || step.MaxQueryableVersions is not null || step.LeaderboardColumns is not null
+                || step.AggregationMethod is not null || step.Columns is not null)
+                errors.Add($"{prefix}: 'entityType', 'sizeLimit', 'resetInterval', 'maxQueryableVersions', and 'leaderboardColumns' cannot be used with '{step.Type}'.");
+
+            return;
+        }
+
+        // create-leaderboard
+        if (step.AggregationMethod is not null || step.Columns is not null)
+            errors.Add($"{prefix}: 'aggregationMethod' and 'columns' cannot be used with '{step.Type}'.");
+
+        if (step.LeaderboardColumns is null || step.LeaderboardColumns.Count == 0)
+        {
+            errors.Add($"{prefix}: 'leaderboardColumns' must not be empty.");
+        }
+        else
+        {
+            var colNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            for (var j = 0; j < step.LeaderboardColumns.Count; j++)
+            {
+                var col = step.LeaderboardColumns[j];
+                if (string.IsNullOrWhiteSpace(col.Name))
+                    errors.Add($"{prefix}: leaderboardColumns[{j}] name must not be empty.");
+                else if (!colNames.Add(col.Name))
+                    errors.Add($"{prefix}: duplicate leaderboard column name '{col.Name}'.");
+
+                if (!ValidSortDirections.Contains(col.SortDirection))
+                    errors.Add($"{prefix}: leaderboardColumns[{j}] has invalid sortDirection '{col.SortDirection}'.");
+            }
+        }
+
+        if (step.SizeLimit is not null && step.SizeLimit < 1)
+            errors.Add($"{prefix}: sizeLimit must be >= 1.");
+
+        ValidateResetInterval(step, prefix, errors);
+        ValidateMaxQueryableVersions(step, prefix, errors);
     }
 
     private static MigrationDefinition ParseYaml(string filePath)
