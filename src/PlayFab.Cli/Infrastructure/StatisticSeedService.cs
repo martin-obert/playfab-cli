@@ -1,9 +1,31 @@
- using PlayFab.ProgressionModels;
+using PlayFab.Cli.Models;
+using PlayFab.ProgressionModels;
 
 namespace PlayFab.Cli.Infrastructure;
 
 public static class StatisticSeedService
 {
+    /// <summary>
+    /// Resolves the tracked synthetic players targeted by --all / --player-id. Returns an error message
+    /// instead of a target list if any requested --player-id isn't in the local tracking file.
+    /// </summary>
+    public static (List<SyntheticPlayer> Targets, string? Error) ResolvePlayerTargets(List<SyntheticPlayer> tracked, bool all, IReadOnlyList<string> playerIds)
+    {
+        if (all)
+            return (tracked, null);
+
+        var targets = new List<SyntheticPlayer>();
+        foreach (var playerId in playerIds)
+        {
+            var player = tracked.Find(p => p.PlayFabId == playerId);
+            if (player is null)
+                return ([], $"Player '{playerId}' not found in local tracking file. Only accounts created by this tool can be targeted.");
+
+            targets.Add(player);
+        }
+
+        return (targets, null);
+    }
     /// <summary>Parses a "Name:min-max" column spec, e.g. "Score:100-2000".</summary>
     public static (string Name, int Min, int Max) ParseColumnSpec(string spec)
     {
@@ -39,10 +61,10 @@ public static class StatisticSeedService
 
     /// <summary>
     /// A seed write resends the current value for every column it isn't targeting (PlayFab's write is positional,
-    /// not a sparse update). That's safe for Min/Max/Last columns (resending the same value is a no-op under either
-    /// an overwrite or an aggregate-on-write server model), but unsafe for Sum columns if the server aggregates
-    /// incoming values into the existing one — resending the existing value would double it. Since that server
-    /// behavior can't be confirmed without a live title, untouched Sum columns are refused rather than risked.
+    /// not a sparse update). Confirmed via PlayFab's official docs (StatisticUpdate.Scores: "used in accordance
+    /// with the aggregation method configured for the statistics") that the server aggregates incoming values into
+    /// the existing one per column, rather than overwriting — so resending the existing value is a safe no-op for
+    /// Min/Max/Last, but would double a Sum column. Untouched Sum columns are refused rather than risked.
     /// </summary>
     public static List<string> ValidateUntouchedSumColumns(IReadOnlyList<StatisticColumn> definedColumns, IReadOnlyList<string> requestedColumnNames)
     {
@@ -70,37 +92,47 @@ public static class StatisticSeedService
         return merged;
     }
 
-    public static async Task<List<StatisticColumn>> GetColumnsAsync(string statisticName)
+    public static async Task<GetStatisticDefinitionResponse> GetDefinitionAsync(string statisticName)
     {
         var result = await PlayFabProgressionAPI.GetStatisticDefinitionAsync(new GetStatisticDefinitionRequest { Name = statisticName });
         if (result.Error is not null)
             throw new InvalidOperationException($"GetStatisticDefinition failed for '{statisticName}': {result.Error.ErrorMessage}");
 
-        return result.Result.Columns;
+        return result.Result;
+    }
+
+    /// <summary>Returns the statistic's columns and its current definition version (bumped by IncrementStatisticVersion).</summary>
+    public static async Task<(List<StatisticColumn> Columns, uint CurrentVersion)> GetColumnsAsync(string statisticName)
+    {
+        var definition = await GetDefinitionAsync(statisticName);
+        return (definition.Columns, definition.Version);
+    }
+
+    /// <summary>Returns the player's current recorded value for a statistic, or null if they have none yet.</summary>
+    public static async Task<EntityStatisticValue?> GetPlayerStatisticAsync(string playFabId, string statisticName)
+    {
+        var result = await PlayFabProgressionAPI.GetStatisticsAsync(new GetStatisticsRequest
+        {
+            Entity = new EntityKey { Id = playFabId, Type = "title_player_account" },
+            StatisticNames = [statisticName],
+        });
+
+        if (result.Error is not null)
+            throw new InvalidOperationException($"GetStatistics failed for '{playFabId}': {result.Error.ErrorMessage}");
+
+        return result.Result.Statistics is not null && result.Result.Statistics.TryGetValue(statisticName, out var existing)
+            ? existing
+            : null;
     }
 
     public static async Task SeedPlayerAsync(string playFabId, string statisticName, IReadOnlyList<string> columnNames, Dictionary<string, (int Min, int Max)> columnRanges)
     {
-        var entity = new EntityKey { Id = playFabId, Type = "title_player_account" };
-
-        var getResult = await PlayFabProgressionAPI.GetStatisticsAsync(new GetStatisticsRequest
-        {
-            Entity = entity,
-            StatisticNames = [statisticName],
-        });
-
-        if (getResult.Error is not null)
-            throw new InvalidOperationException($"GetStatistics failed for '{playFabId}': {getResult.Error.ErrorMessage}");
-
-        var currentScores = getResult.Result.Statistics is not null && getResult.Result.Statistics.TryGetValue(statisticName, out var existing)
-            ? existing.Scores
-            : [];
-
-        var mergedScores = MergeScores(columnNames, currentScores, columnRanges);
+        var existing = await GetPlayerStatisticAsync(playFabId, statisticName);
+        var mergedScores = MergeScores(columnNames, existing?.Scores ?? [], columnRanges);
 
         var updateResult = await PlayFabProgressionAPI.UpdateStatisticsAsync(new UpdateStatisticsRequest
         {
-            Entity = entity,
+            Entity = new EntityKey { Id = playFabId, Type = "title_player_account" },
             Statistics =
             [
                 new StatisticUpdate { Name = statisticName, Scores = mergedScores },

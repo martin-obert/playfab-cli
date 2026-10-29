@@ -1,4 +1,5 @@
 using PlayFab.Cli.Infrastructure;
+using PlayFab.Cli.Models;
 using PlayFab.ProgressionModels;
 using Xunit;
 
@@ -139,5 +140,40 @@ public class StatisticSeedServiceTests
             var value = int.Parse(merged[0]);
             Assert.InRange(value, 10, 20);
         }
+    }
+
+    private static List<SyntheticPlayer> TwoTrackedPlayers() =>
+    [
+        new SyntheticPlayer { PlayFabId = "P1", ServerCustomId = "s1", DisplayName = "One", CreatedAt = DateTime.UtcNow },
+        new SyntheticPlayer { PlayFabId = "P2", ServerCustomId = "s2", DisplayName = "Two", CreatedAt = DateTime.UtcNow },
+    ];
+
+    [Fact]
+    public void ResolvePlayerTargets_All_ReturnsEveryTrackedPlayer()
+    {
+        var (targets, error) = StatisticSeedService.ResolvePlayerTargets(TwoTrackedPlayers(), all: true, []);
+
+        Assert.Null(error);
+        Assert.Equal(2, targets.Count);
+    }
+
+    [Fact]
+    public void ResolvePlayerTargets_SpecificTrackedIds_ReturnsOnlyThose()
+    {
+        var (targets, error) = StatisticSeedService.ResolvePlayerTargets(TwoTrackedPlayers(), all: false, ["P2"]);
+
+        Assert.Null(error);
+        Assert.Single(targets);
+        Assert.Equal("P2", targets[0].PlayFabId);
+    }
+
+    [Fact]
+    public void ResolvePlayerTargets_UntrackedId_ReturnsError()
+    {
+        var (targets, error) = StatisticSeedService.ResolvePlayerTargets(TwoTrackedPlayers(), all: false, ["NOT_TRACKED"]);
+
+        Assert.Empty(targets);
+        Assert.NotNull(error);
+        Assert.Contains("NOT_TRACKED", error);
     }
 }

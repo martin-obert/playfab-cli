@@ -79,6 +79,48 @@ public class StatsCommandParsingTests
     }
 
     [Fact]
+    public void StatsGet_ParsesAllOption()
+    {
+        var result = _rootCommand.Parse("stats get --statistic PlayerScore --all");
+        Assert.Empty(result.Errors);
+    }
+
+    [Fact]
+    public void StatsGet_ParsesPlayerIdOption()
+    {
+        var result = _rootCommand.Parse("stats get --statistic PlayerScore --player-id ABC123");
+        Assert.Empty(result.Errors);
+    }
+
+    [Fact]
+    public void StatsGet_MissingStatistic_ReturnsParseError()
+    {
+        var result = _rootCommand.Parse("stats get --all");
+        Assert.NotEmpty(result.Errors);
+    }
+
+    [Fact]
+    public void StatsGet_ParsesWithoutAllOrPlayerId()
+    {
+        var result = _rootCommand.Parse("stats get --statistic PlayerScore");
+        Assert.Empty(result.Errors);
+    }
+
+    [Fact]
+    public void StatsDefinition_ParsesWithRequiredOption()
+    {
+        var result = _rootCommand.Parse("stats definition --statistic PlayerScore");
+        Assert.Empty(result.Errors);
+    }
+
+    [Fact]
+    public void StatsDefinition_MissingStatistic_ReturnsParseError()
+    {
+        var result = _rootCommand.Parse("stats definition");
+        Assert.NotEmpty(result.Errors);
+    }
+
+    [Fact]
     public void GlobalOptions_PropagateToStatsSubcommands()
     {
         var result = _rootCommand.Parse("--title-id GLOBAL stats seed --statistic PlayerScore --column Score:100-2000 --all");

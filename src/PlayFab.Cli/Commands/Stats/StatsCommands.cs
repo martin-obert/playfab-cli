@@ -1,7 +1,9 @@
 using System.CommandLine;
 using PlayFab.Cli.Infrastructure;
-using PlayFab.Cli.Models;
 using PlayFab.ProgressionModels;
+using Spectre.Console;
+
+using SpectreTable = Spectre.Console.Table;
 
 namespace PlayFab.Cli.Commands.Stats;
 
@@ -9,8 +11,10 @@ public static class StatsCommands
 {
     public static Command CreateGroup(GlobalOptions globalOptions)
     {
-        var group = new Command("stats", "Seed statistic values for synthetic test players");
+        var group = new Command("stats", "Seed and read back statistic values for synthetic test players");
         group.Add(CreateSeedCommand(globalOptions));
+        group.Add(CreateGetCommand(globalOptions));
+        group.Add(CreateDefinitionCommand(globalOptions));
         return group;
     }
 
@@ -96,7 +100,7 @@ public static class StatsCommands
             List<StatisticColumn> columns;
             try
             {
-                columns = await StatisticSeedService.GetColumnsAsync(statisticName);
+                (columns, _) = await StatisticSeedService.GetColumnsAsync(statisticName);
             }
             catch (Exception ex)
             {
@@ -125,25 +129,11 @@ public static class StatsCommands
             }
 
             var store = SyntheticPlayerService.Load(creds.TitleId!);
-
-            List<SyntheticPlayer> targets;
-            if (seedAll)
+            var (targets, targetError) = StatisticSeedService.ResolvePlayerTargets(store.Players, seedAll, playerIds);
+            if (targetError is not null)
             {
-                targets = store.Players;
-            }
-            else
-            {
-                targets = [];
-                foreach (var playerId in playerIds)
-                {
-                    var player = store.Players.Find(p => p.PlayFabId == playerId);
-                    if (player is null)
-                    {
-                        Console.Error.WriteLine($"Player '{playerId}' not found in local tracking file. Only accounts created by this tool can be seeded.");
-                        return;
-                    }
-                    targets.Add(player);
-                }
+                Console.Error.WriteLine(targetError);
+                return;
             }
 
             if (targets.Count == 0)
@@ -188,6 +178,200 @@ public static class StatsCommands
             }
 
             Console.WriteLine($"{seeded}/{targets.Count} account(s) seeded.");
+        });
+
+        return command;
+    }
+
+    private static Command CreateGetCommand(GlobalOptions globalOptions)
+    {
+        var statisticOption = new Option<string>("--statistic")
+        {
+            Description = "Name of the target statistic",
+            Required = true,
+        };
+        var allOption = new Option<bool>("--all")
+        {
+            Description = "Read all tracked synthetic accounts for this title",
+        };
+        var playerIdOption = new Option<string[]>("--player-id")
+        {
+            Description = "Read a specific tracked synthetic account by PlayFab ID. Repeatable.",
+            DefaultValueFactory = _ => [],
+        };
+
+        var command = new Command("get", "Read back a statistic's current stored value for synthetic test players, straight from PlayFab");
+        command.Add(statisticOption);
+        command.Add(allOption);
+        command.Add(playerIdOption);
+
+        command.SetAction(async parseResult =>
+        {
+            var titleId = parseResult.GetValue(globalOptions.TitleId);
+            var secretKey = parseResult.GetValue(globalOptions.SecretKey);
+            var statisticName = parseResult.GetRequiredValue(statisticOption);
+            var readAll = parseResult.GetValue(allOption);
+            var playerIds = parseResult.GetValue(playerIdOption) ?? [];
+            var output = parseResult.GetValue(globalOptions.Output);
+
+            if (!readAll && playerIds.Length == 0)
+            {
+                Console.Error.WriteLine("Specify --all or --player-id <id>.");
+                return;
+            }
+
+            var creds = await PlayFabAuth.RequireEntityCredentialsAsync(titleId, secretKey);
+
+            List<StatisticColumn> columns;
+            uint currentVersion;
+            try
+            {
+                (columns, currentVersion) = await StatisticSeedService.GetColumnsAsync(statisticName);
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"Failed to load statistic '{statisticName}': {ex.Message}");
+                return;
+            }
+
+            var columnNames = columns.Select(c => c.Name).ToList();
+
+            var store = SyntheticPlayerService.Load(creds.TitleId!);
+            var (targets, targetError) = StatisticSeedService.ResolvePlayerTargets(store.Players, readAll, playerIds);
+            if (targetError is not null)
+            {
+                Console.Error.WriteLine(targetError);
+                return;
+            }
+
+            if (targets.Count == 0)
+            {
+                Console.WriteLine("No tracked synthetic accounts to read.");
+                return;
+            }
+
+            var rows = new List<(string PlayFabId, string Version, string[] Values)>();
+            foreach (var player in targets)
+            {
+                var value = await StatisticSeedService.GetPlayerStatisticAsync(player.PlayFabId, statisticName);
+                var scores = value?.Scores ?? [];
+                var values = columnNames.Select((_, i) => i < scores.Count ? scores[i] : "—").ToArray();
+                rows.Add((player.PlayFabId, value is not null ? value.Version.ToString() : "—", values));
+            }
+
+            Console.WriteLine($"Statistic '{statisticName}' current definition version: {currentVersion}");
+            var mismatches = rows.Where(r => r.Version != "—" && uint.Parse(r.Version) != currentVersion).ToList();
+            if (mismatches.Count > 0)
+            {
+                Console.WriteLine($"WARNING: {mismatches.Count} player(s) have a value recorded under a version other than the current one — it may not surface wherever Game Manager looks for the current version's data:");
+                foreach (var m in mismatches)
+                    Console.WriteLine($"  {m.PlayFabId}: value version {m.Version} != current version {currentVersion}");
+            }
+
+            if (output == OutputFormat.Table)
+            {
+                var table = new SpectreTable()
+                    .Title($"Statistic '{statisticName}'")
+                    .Border(TableBorder.Rounded);
+                table.AddColumn("PlayFab ID");
+                table.AddColumn("Version");
+                foreach (var columnName in columnNames)
+                    table.AddColumn(columnName);
+
+                foreach (var row in rows)
+                    table.AddRow([row.PlayFabId, row.Version, .. row.Values]);
+
+                AnsiConsole.Write(table);
+            }
+            else
+            {
+                OutputHelper.WriteJson(rows.Select(r => new
+                {
+                    playFabId = r.PlayFabId,
+                    version = r.Version,
+                    columns = columnNames.Zip(r.Values, (name, value) => (name, value))
+                        .ToDictionary(x => x.name, x => x.value),
+                }));
+            }
+        });
+
+        return command;
+    }
+
+    private static Command CreateDefinitionCommand(GlobalOptions globalOptions)
+    {
+        var statisticOption = new Option<string>("--statistic")
+        {
+            Description = "Name of the statistic to display",
+            Required = true,
+        };
+
+        var command = new Command("definition", "Display a statistic's definition (columns, aggregation methods, versioning) straight from PlayFab");
+        command.Add(statisticOption);
+
+        command.SetAction(async parseResult =>
+        {
+            var titleId = parseResult.GetValue(globalOptions.TitleId);
+            var secretKey = parseResult.GetValue(globalOptions.SecretKey);
+            var statisticName = parseResult.GetRequiredValue(statisticOption);
+            var output = parseResult.GetValue(globalOptions.Output);
+
+            await PlayFabAuth.RequireEntityCredentialsAsync(titleId, secretKey);
+
+            GetStatisticDefinitionResponse definition;
+            try
+            {
+                definition = await StatisticSeedService.GetDefinitionAsync(statisticName);
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"Failed to load statistic '{statisticName}': {ex.Message}");
+                return;
+            }
+
+            var columns = definition.Columns ?? [];
+            var linkedLeaderboards = definition.LinkedLeaderboardNames ?? [];
+
+            if (output == OutputFormat.Table)
+            {
+                var table = new SpectreTable()
+                    .Title($"Statistic '{statisticName}'")
+                    .Border(TableBorder.Rounded);
+                table.AddColumn("Field");
+                table.AddColumn("Value");
+                table.AddRow("Entity Type", definition.EntityType ?? "—");
+                table.AddRow("Current Version", definition.Version.ToString());
+                table.AddRow("Reset Interval", definition.VersionConfiguration?.ResetInterval.ToString() ?? "—");
+                table.AddRow("Max Queryable Versions", definition.VersionConfiguration?.MaxQueryableVersions.ToString() ?? "—");
+                table.AddRow("Created", definition.Created.ToString("o"));
+                table.AddRow("Last Reset", definition.LastResetTime?.ToString("o") ?? "—");
+                table.AddRow("Linked Leaderboards", linkedLeaderboards.Count > 0 ? string.Join(", ", linkedLeaderboards) : "(none)");
+                AnsiConsole.Write(table);
+
+                var columnsTable = new SpectreTable()
+                    .Title("Columns")
+                    .Border(TableBorder.Rounded);
+                columnsTable.AddColumn("Name");
+                columnsTable.AddColumn("Aggregation Method");
+                foreach (var column in columns)
+                    columnsTable.AddRow(column.Name, column.AggregationMethod.ToString());
+                AnsiConsole.Write(columnsTable);
+            }
+            else
+            {
+                OutputHelper.WriteJson(new
+                {
+                    name = statisticName,
+                    entityType = definition.EntityType,
+                    version = definition.Version,
+                    resetInterval = definition.VersionConfiguration?.ResetInterval.ToString(),
+                    maxQueryableVersions = definition.VersionConfiguration?.MaxQueryableVersions,
+                    created = definition.Created,
+                    lastResetTime = definition.LastResetTime,
+                    linkedLeaderboardNames = linkedLeaderboards,
+                    columns = columns.Select(c => new { name = c.Name, aggregationMethod = c.AggregationMethod.ToString() }),
+                });
+            }
         });
 
         return command;
