@@ -68,7 +68,16 @@ public static class SyntheticPlayerService
 
         var playFabId = loginResult.Result.PlayFabId;
 
-        await SetDisplayNameWithRetryAsync(playFabId, displayName);
+        var displayResult = await PlayFabAdminAPI.UpdateUserTitleDisplayNameAsync(
+            new AdminModels.UpdateUserTitleDisplayNameRequest
+            {
+                PlayFabId = playFabId,
+                DisplayName = displayName,
+            });
+
+        if (displayResult.Error is not null)
+            throw new InvalidOperationException(
+                $"UpdateUserTitleDisplayName failed: {displayResult.Error.ErrorMessage}");
 
         return new SyntheticPlayer
         {
@@ -89,25 +98,4 @@ public static class SyntheticPlayerService
                 $"DeletePlayer failed for '{playFabId}': {result.Error.ErrorMessage}");
     }
 
-    private static async Task SetDisplayNameWithRetryAsync(string playFabId, string displayName)
-    {
-        const int maxAttempts = 3;
-        for (var attempt = 0; attempt < maxAttempts; attempt++)
-        {
-            var name = attempt == 0 ? displayName : GenerateDisplayName();
-            var result = await PlayFabAdminAPI.UpdateUserTitleDisplayNameAsync(
-                new AdminModels.UpdateUserTitleDisplayNameRequest
-                {
-                    PlayFabId = playFabId,
-                    DisplayName = name,
-                });
-
-            if (result.Error is null)
-                return;
-
-            if (attempt == maxAttempts - 1)
-                throw new InvalidOperationException(
-                    $"UpdateUserTitleDisplayName failed after {maxAttempts} attempts: {result.Error.ErrorMessage}");
-        }
-    }
 }
