@@ -26,5 +26,12 @@ public static class OperationTypes
     [
         SetTitleData, DeleteTitleData,
         SetTitleInternalData, DeleteTitleInternalData,
+        CreateStatistic, DeleteStatistic,
+    ];
+
+    /// <summary>Operations with a structured step shape (name/columns) instead of the flat key/value shape.</summary>
+    public static readonly HashSet<string> StatisticOperations =
+    [
+        CreateStatistic, DeleteStatistic,
     ];
 }

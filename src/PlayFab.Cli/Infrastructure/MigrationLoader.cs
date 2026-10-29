@@ -90,6 +90,12 @@ public static partial class MigrationLoader
                 continue;
             }
 
+            if (OperationTypes.StatisticOperations.Contains(step.Type))
+            {
+                ValidateStatisticStep(step, prefix, errors);
+                continue;
+            }
+
             var hasKey = step.Key is not null;
             var hasKeys = step.Keys is not null;
             var hasValues = step.Values is not null;
@@ -165,6 +171,73 @@ public static partial class MigrationLoader
                 }
             }
         }
+    }
+
+    private static readonly HashSet<string> ValidAggregationMethods = new(StringComparer.OrdinalIgnoreCase) { "Last", "Min", "Max", "Sum" };
+    private static readonly HashSet<string> ValidResetIntervals = new(StringComparer.OrdinalIgnoreCase) { "Manual", "Hour", "Day", "Week", "Month" };
+
+    private static void ValidateStatisticStep(MigrationStep step, string prefix, List<string> errors)
+    {
+        if (string.IsNullOrWhiteSpace(step.Name))
+            errors.Add($"{prefix}: Name must not be empty.");
+
+        if (step.Key is not null || step.Keys is not null || step.Values is not null)
+            errors.Add($"{prefix}: 'key', 'keys', and 'values' cannot be used with '{step.Type}'.");
+
+        if (step.Type == OperationTypes.DeleteStatistic)
+        {
+            if (step.EntityType is not null || step.AggregationMethod is not null || step.ResetInterval is not null
+                || step.MaxQueryableVersions is not null || step.Columns is not null)
+                errors.Add($"{prefix}: 'entityType', 'aggregationMethod', 'resetInterval', 'maxQueryableVersions', and 'columns' cannot be used with '{step.Type}'.");
+
+            return;
+        }
+
+        // create-statistic
+        var hasAggregationMethod = step.AggregationMethod is not null;
+        var hasColumns = step.Columns is not null;
+
+        if (!hasAggregationMethod && !hasColumns)
+        {
+            errors.Add($"{prefix}: Must specify either 'aggregationMethod' (single-column) or 'columns' (multi-column).");
+        }
+        else if (hasAggregationMethod && hasColumns)
+        {
+            errors.Add($"{prefix}: Only one of 'aggregationMethod' or 'columns' may be specified.");
+        }
+        else if (hasAggregationMethod)
+        {
+            if (!ValidAggregationMethods.Contains(step.AggregationMethod!))
+                errors.Add($"{prefix}: Invalid aggregationMethod '{step.AggregationMethod}'.");
+        }
+        else
+        {
+            if (step.Columns!.Count == 0)
+            {
+                errors.Add($"{prefix}: 'columns' must not be empty.");
+            }
+            else
+            {
+                var colNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                for (var j = 0; j < step.Columns!.Count; j++)
+                {
+                    var col = step.Columns[j];
+                    if (string.IsNullOrWhiteSpace(col.Name))
+                        errors.Add($"{prefix}: columns[{j}] name must not be empty.");
+                    else if (!colNames.Add(col.Name))
+                        errors.Add($"{prefix}: duplicate column name '{col.Name}'.");
+
+                    if (!ValidAggregationMethods.Contains(col.AggregationMethod))
+                        errors.Add($"{prefix}: columns[{j}] has invalid aggregationMethod '{col.AggregationMethod}'.");
+                }
+            }
+        }
+
+        if (step.ResetInterval is not null && !ValidResetIntervals.Contains(step.ResetInterval))
+            errors.Add($"{prefix}: Invalid resetInterval '{step.ResetInterval}'.");
+
+        if (step.MaxQueryableVersions is not null && step.MaxQueryableVersions < 1)
+            errors.Add($"{prefix}: maxQueryableVersions must be >= 1.");
     }
 
     private static MigrationDefinition ParseYaml(string filePath)

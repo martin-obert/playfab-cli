@@ -34,14 +34,29 @@ public class OperationTypesTests
         Assert.Contains(OperationTypes.DeleteTitleData, OperationTypes.Implemented);
         Assert.Contains(OperationTypes.SetTitleInternalData, OperationTypes.Implemented);
         Assert.Contains(OperationTypes.DeleteTitleInternalData, OperationTypes.Implemented);
-        Assert.Equal(4, OperationTypes.Implemented.Count);
+    }
+
+    [Fact]
+    public void Implemented_ContainsStatisticOperations()
+    {
+        Assert.Contains(OperationTypes.CreateStatistic, OperationTypes.Implemented);
+        Assert.Contains(OperationTypes.DeleteStatistic, OperationTypes.Implemented);
+        Assert.Equal(6, OperationTypes.Implemented.Count);
     }
 
     [Fact]
     public void Implemented_DoesNotContainFutureTypes()
     {
-        Assert.DoesNotContain(OperationTypes.CreateStatistic, OperationTypes.Implemented);
+        Assert.DoesNotContain(OperationTypes.ResetStatistic, OperationTypes.Implemented);
         Assert.DoesNotContain(OperationTypes.CreateLeaderboard, OperationTypes.Implemented);
         Assert.DoesNotContain(OperationTypes.SetPolicy, OperationTypes.Implemented);
+    }
+
+    [Fact]
+    public void StatisticOperations_ContainsExactlyCreateAndDelete()
+    {
+        Assert.Contains(OperationTypes.CreateStatistic, OperationTypes.StatisticOperations);
+        Assert.Contains(OperationTypes.DeleteStatistic, OperationTypes.StatisticOperations);
+        Assert.Equal(2, OperationTypes.StatisticOperations.Count);
     }
 }

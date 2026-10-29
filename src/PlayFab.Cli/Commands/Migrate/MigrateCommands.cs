@@ -101,7 +101,7 @@ public static class MigrateCommands
             var migrationsDir = parseResult.GetValue(migrationsDirOption)!;
             var toId = parseResult.GetValue(toOption);
 
-            PlayFabAuth.RequireCredentials(titleId, secretKey);
+            await PlayFabAuth.RequireEntityCredentialsAsync(titleId, secretKey);
 
             var localMigrations = MigrationLoader.LoadAll(migrationsDir);
             var ledger = await MigrationLedgerService.ReadLedgerAsync();
@@ -154,7 +154,7 @@ public static class MigrateCommands
             var migrationsDir = parseResult.GetValue(migrationsDirOption)!;
             var toId = parseResult.GetValue(toOption);
 
-            PlayFabAuth.RequireCredentials(titleId, secretKey);
+            await PlayFabAuth.RequireEntityCredentialsAsync(titleId, secretKey);
 
             var localMigrations = MigrationLoader.LoadAll(migrationsDir);
             var ledger = await MigrationLedgerService.ReadLedgerAsync();

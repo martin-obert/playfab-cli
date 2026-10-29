@@ -1,5 +1,6 @@
 using PlayFab;
 using PlayFab.AdminModels;
+using PlayFab.ProgressionModels;
 using PlayFab.Cli.Models;
 
 namespace PlayFab.Cli.Infrastructure;
@@ -68,6 +69,12 @@ public static class MigrationRunner
         if (!OperationTypes.Implemented.Contains(step.Type))
             throw new NotImplementedException($"Operation type '{step.Type}' is defined but not yet implemented.");
 
+        if (OperationTypes.StatisticOperations.Contains(step.Type))
+        {
+            await ExecuteStatisticStepAsync(step);
+            return;
+        }
+
         if (step.Keys is not null)
         {
             foreach (var key in step.Keys)
@@ -108,8 +115,61 @@ public static class MigrationRunner
         if (step.Key is not null) return step.Key;
         if (step.Keys is not null) return $"[{string.Join(", ", step.Keys)}]";
         if (step.Values is not null) return $"[{string.Join(", ", step.Values.Keys)}]";
+        if (step.Name is not null) return step.Name;
         return "?";
     }
+
+    private static async Task ExecuteStatisticStepAsync(MigrationStep step)
+    {
+        switch (step.Type)
+        {
+            case OperationTypes.CreateStatistic:
+                await CreateStatisticDefinitionAsync(step);
+                break;
+            case OperationTypes.DeleteStatistic:
+                await DeleteStatisticDefinitionAsync(step.Name!);
+                break;
+        }
+    }
+
+    private static async Task CreateStatisticDefinitionAsync(MigrationStep step)
+    {
+        var columns = step.Columns is not null
+            ? step.Columns.Select(c => new StatisticColumn
+            {
+                Name = c.Name,
+                AggregationMethod = ParseAggregationMethod(c.AggregationMethod),
+            }).ToList()
+            : [new StatisticColumn { Name = "Value", AggregationMethod = ParseAggregationMethod(step.AggregationMethod) }];
+
+        var result = await PlayFabProgressionAPI.CreateStatisticDefinitionAsync(new CreateStatisticDefinitionRequest
+        {
+            Name = step.Name!,
+            EntityType = step.EntityType ?? "title_player_account",
+            Columns = columns,
+            VersionConfiguration = new VersionConfiguration
+            {
+                ResetInterval = ParseResetInterval(step.ResetInterval),
+                MaxQueryableVersions = step.MaxQueryableVersions ?? 1,
+            },
+        });
+
+        if (result.Error is not null)
+            throw new InvalidOperationException($"CreateStatisticDefinition failed for '{step.Name}': {result.Error.ErrorMessage}");
+    }
+
+    private static async Task DeleteStatisticDefinitionAsync(string name)
+    {
+        var result = await PlayFabProgressionAPI.DeleteStatisticDefinitionAsync(new DeleteStatisticDefinitionRequest { Name = name });
+        if (result.Error is not null)
+            throw new InvalidOperationException($"DeleteStatisticDefinition failed for '{name}': {result.Error.ErrorMessage}");
+    }
+
+    private static PlayFab.ProgressionModels.StatisticAggregationMethod ParseAggregationMethod(string? value) =>
+        Enum.Parse<PlayFab.ProgressionModels.StatisticAggregationMethod>(value ?? "Last", ignoreCase: true);
+
+    private static PlayFab.ProgressionModels.ResetInterval ParseResetInterval(string? value) =>
+        Enum.Parse<PlayFab.ProgressionModels.ResetInterval>(value ?? "Manual", ignoreCase: true);
 
     private static async Task SetTitleDataAsync(string key, string? value)
     {

@@ -251,11 +251,11 @@ public class MigrationLoaderTests : IDisposable
         var path = WriteYaml("20261028120000_test.yml", """
             description: "test"
             up:
-              - type: create-statistic
+              - type: reset-statistic
                 key: MyStat
                 value: "max"
             down:
-              - type: delete-statistic
+              - type: reset-statistic
                 key: MyStat
             """);
         var migration = MigrationLoader.LoadSingle(path);
@@ -406,6 +406,218 @@ public class MigrationLoaderTests : IDisposable
         var errors = MigrationLoader.Validate(migration);
 
         Assert.Contains(errors, e => e.Contains("Must specify"));
+    }
+
+    [Fact]
+    public void Validate_CreateStatisticSingleColumn_Valid()
+    {
+        var path = WriteYaml("20261028120000_test.yml", """
+            description: "test"
+            up:
+              - type: create-statistic
+                name: PlayerScore
+                aggregationMethod: Sum
+            down:
+              - type: delete-statistic
+                name: PlayerScore
+            """);
+        var migration = MigrationLoader.LoadSingle(path);
+
+        var errors = MigrationLoader.Validate(migration);
+
+        Assert.Empty(errors);
+    }
+
+    [Fact]
+    public void Validate_CreateStatisticMultiColumn_Valid()
+    {
+        var path = WriteYaml("20261028120000_test.yml", """
+            description: "test"
+            up:
+              - type: create-statistic
+                name: RaceResult
+                columns:
+                  - name: Time
+                    aggregationMethod: Min
+                  - name: Distance
+                    aggregationMethod: Max
+            down:
+              - type: delete-statistic
+                name: RaceResult
+            """);
+        var migration = MigrationLoader.LoadSingle(path);
+
+        var errors = MigrationLoader.Validate(migration);
+
+        Assert.Empty(errors);
+    }
+
+    [Fact]
+    public void Validate_CreateStatisticMissingName_ReturnsError()
+    {
+        var path = WriteYaml("20261028120000_test.yml", """
+            description: "test"
+            up:
+              - type: create-statistic
+                aggregationMethod: Sum
+            down: []
+            """);
+        var migration = MigrationLoader.LoadSingle(path);
+
+        var errors = MigrationLoader.Validate(migration);
+
+        Assert.Contains(errors, e => e.Contains("Name must not be empty"));
+    }
+
+    [Fact]
+    public void Validate_CreateStatisticBothAggregationAndColumns_ReturnsError()
+    {
+        var path = WriteYaml("20261028120000_test.yml", """
+            description: "test"
+            up:
+              - type: create-statistic
+                name: PlayerScore
+                aggregationMethod: Sum
+                columns:
+                  - name: Score
+                    aggregationMethod: Sum
+            down: []
+            """);
+        var migration = MigrationLoader.LoadSingle(path);
+
+        var errors = MigrationLoader.Validate(migration);
+
+        Assert.Contains(errors, e => e.Contains("Only one of 'aggregationMethod' or 'columns'"));
+    }
+
+    [Fact]
+    public void Validate_CreateStatisticNeitherAggregationNorColumns_ReturnsError()
+    {
+        var path = WriteYaml("20261028120000_test.yml", """
+            description: "test"
+            up:
+              - type: create-statistic
+                name: PlayerScore
+            down: []
+            """);
+        var migration = MigrationLoader.LoadSingle(path);
+
+        var errors = MigrationLoader.Validate(migration);
+
+        Assert.Contains(errors, e => e.Contains("Must specify either 'aggregationMethod'"));
+    }
+
+    [Fact]
+    public void Validate_CreateStatisticDuplicateColumnNames_ReturnsError()
+    {
+        var path = WriteYaml("20261028120000_test.yml", """
+            description: "test"
+            up:
+              - type: create-statistic
+                name: RaceResult
+                columns:
+                  - name: Time
+                    aggregationMethod: Min
+                  - name: Time
+                    aggregationMethod: Max
+            down: []
+            """);
+        var migration = MigrationLoader.LoadSingle(path);
+
+        var errors = MigrationLoader.Validate(migration);
+
+        Assert.Contains(errors, e => e.Contains("duplicate column name"));
+    }
+
+    [Fact]
+    public void Validate_CreateStatisticInvalidResetInterval_ReturnsError()
+    {
+        var path = WriteYaml("20261028120000_test.yml", """
+            description: "test"
+            up:
+              - type: create-statistic
+                name: PlayerScore
+                aggregationMethod: Sum
+                resetInterval: Fortnight
+            down: []
+            """);
+        var migration = MigrationLoader.LoadSingle(path);
+
+        var errors = MigrationLoader.Validate(migration);
+
+        Assert.Contains(errors, e => e.Contains("Invalid resetInterval"));
+    }
+
+    [Fact]
+    public void Validate_CreateStatisticInvalidMaxQueryableVersions_ReturnsError()
+    {
+        var path = WriteYaml("20261028120000_test.yml", """
+            description: "test"
+            up:
+              - type: create-statistic
+                name: PlayerScore
+                aggregationMethod: Sum
+                maxQueryableVersions: 0
+            down: []
+            """);
+        var migration = MigrationLoader.LoadSingle(path);
+
+        var errors = MigrationLoader.Validate(migration);
+
+        Assert.Contains(errors, e => e.Contains("maxQueryableVersions must be >= 1"));
+    }
+
+    [Fact]
+    public void Validate_CreateStatisticWithStrayKey_ReturnsError()
+    {
+        var path = WriteYaml("20261028120000_test.yml", """
+            description: "test"
+            up:
+              - type: create-statistic
+                name: PlayerScore
+                aggregationMethod: Sum
+                key: ShouldNotBeHere
+            down: []
+            """);
+        var migration = MigrationLoader.LoadSingle(path);
+
+        var errors = MigrationLoader.Validate(migration);
+
+        Assert.Contains(errors, e => e.Contains("'key', 'keys', and 'values' cannot be used"));
+    }
+
+    [Fact]
+    public void Validate_DeleteStatisticMissingName_ReturnsError()
+    {
+        var path = WriteYaml("20261028120000_test.yml", """
+            description: "test"
+            up:
+              - type: delete-statistic
+            down: []
+            """);
+        var migration = MigrationLoader.LoadSingle(path);
+
+        var errors = MigrationLoader.Validate(migration);
+
+        Assert.Contains(errors, e => e.Contains("Name must not be empty"));
+    }
+
+    [Fact]
+    public void Validate_DeleteStatisticWithStrayField_ReturnsError()
+    {
+        var path = WriteYaml("20261028120000_test.yml", """
+            description: "test"
+            up:
+              - type: delete-statistic
+                name: PlayerScore
+                aggregationMethod: Sum
+            down: []
+            """);
+        var migration = MigrationLoader.LoadSingle(path);
+
+        var errors = MigrationLoader.Validate(migration);
+
+        Assert.Contains(errors, e => e.Contains("cannot be used with 'delete-statistic'"));
     }
 
     private string WriteYaml(string filename, string content)

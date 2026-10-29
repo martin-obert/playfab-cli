@@ -1,4 +1,5 @@
 using PlayFab;
+using PlayFab.AuthenticationModels;
 
 namespace PlayFab.Cli.Infrastructure;
 
@@ -18,6 +19,18 @@ public static class PlayFabAuth
 
         PlayFabSettings.staticSettings.TitleId = creds.TitleId;
         PlayFabSettings.staticSettings.DeveloperSecretKey = creds.SecretKey;
+        return creds;
+    }
+
+    /// <summary>Resolves credentials and obtains an entity token, required for Progression API calls.</summary>
+    public static async Task<ResolvedCredentials> RequireEntityCredentialsAsync(string? cliTitleId, string? cliSecretKey)
+    {
+        var creds = RequireCredentials(cliTitleId, cliSecretKey);
+
+        var result = await PlayFabAuthenticationAPI.GetEntityTokenAsync(new GetEntityTokenRequest());
+        if (result.Error is not null)
+            throw new InvalidOperationException($"Entity authentication failed: {result.Error.ErrorMessage}");
+
         return creds;
     }
 }
