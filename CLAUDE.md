@@ -172,7 +172,43 @@ Only desired-state fields are stored. Runtime metadata (version, created, lastRe
 - Version config drift (resetInterval/maxQueryableVersions) → warned only (`update-statistic` not yet implemented)
 - Matching → synced, no action
 
-The `plan` subcommand group under `migrate` is designed for future expansion (e.g. `playfab migrate plan leaderboards`).
+### Leaderboard Definition Files (Desired-State)
+
+Leaderboard definitions can be stored as standalone YAML files in a `leaderboards/` folder (one file per leaderboard), serving as the desired-state source of truth — same pattern as statistic definitions.
+
+**File format** — `leaderboards/<Name>.yml`:
+
+```yaml
+name: TopScores
+entityType: title_player_account
+resetInterval: Month
+maxQueryableVersions: 3
+sizeLimit: 500
+columns:
+  - name: Score
+    sortDirection: Descending
+    linkedStatistic: PlayerScore          # optional — paired with linkedStatisticColumn
+    linkedStatisticColumn: Value
+  - name: Rank
+    sortDirection: Ascending
+```
+
+Only desired-state fields are stored. Runtime metadata (version, created, lastResetTime) is excluded. Column `linkedStatistic`/`linkedStatisticColumn` must both be set or both omitted — the loader validates pairing but not that the referenced statistic exists (PlayFab rejects bad references at `migrate up`).
+
+**`playfab leaderboard pull --name <name> [--leaderboards-dir <path>]`** fetches a single leaderboard definition from PlayFab via `GetLeaderboardDefinitionAsync` and writes it as a YAML file. **`playfab leaderboard pull --all [--leaderboards-dir <path>]`** fetches all leaderboards via `ListLeaderboardDefinitionsAsync` (paginated). `--leaderboards-dir` defaults to `leaderboards/`. Overwrites existing files (pull is always a fresh snapshot).
+
+**Key classes:**
+- `LeaderboardDefinitionFile` / `LeaderboardColumnDefinition` (`Models/LeaderboardDefinitionFile.cs`) — strongly-typed model, separate from `MigrationStep`
+- `LeaderboardDefinitionStore` (`Infrastructure/LeaderboardDefinitionStore.cs`) — load/save/validate YAML files, map from PlayFab API response, paginated fetch
+- `LeaderboardReconciler` (`Infrastructure/LeaderboardReconciler.cs`) — pure comparison logic: takes local and remote definition lists, returns a list of `LeaderboardReconcileAction`s (Create/Delete/Recreate/Synced/VersionConfigDrift). Column comparison includes sort direction and linked statistic fields (case-insensitive). `SizeLimit` is compared as version config (warn-only drift).
+- `MigrationGenerator.GenerateLeaderboardMigration` (`Infrastructure/MigrationGenerator.cs`) — converts a `LeaderboardReconcileResult` into a `MigrationDefinition` with symmetric up/down steps
+
+**`playfab migrate plan leaderboards [--leaderboards-dir <path>] [--name <name>] [--include-deletes] [--allow-recreate]`** compares local definition files against live PlayFab state and generates a migration file for the differences. Inherits `--migrations-dir` from the `migrate` group. `--name` filters to a single leaderboard. Reconciliation rules mirror statistics:
+- Local-only leaderboard → `create-leaderboard` step
+- PlayFab-only leaderboard → warned unless `--include-deletes` is set (then `delete-leaderboard`)
+- Column/entity-type mismatch → warned unless `--allow-recreate` is set (then destructive delete+create pair — loses data)
+- Version config drift (resetInterval/maxQueryableVersions/sizeLimit) → warned only (`update-leaderboard` not yet implemented)
+- Matching → synced, no action
 
 `playfab leaderboard get --name <name> [--page-size N] [--starting-position N] [--version N]` reads a leaderboard's ranked entries straight from `PlayFabProgressionAPI.GetLeaderboardAsync` (`Commands/Leaderboard/LeaderboardCommands.cs`) — unlike `stats get`, this isn't scoped to tracked synthetic players; it returns a page of the real ranking (rank, entity ID, display name, per-column scores), matching how Game Manager itself would read it.
 
@@ -197,4 +233,4 @@ Priority: CLI args → env vars (`PLAYFAB_TITLE_ID`, `PLAYFAB_SECRET_KEY`) → c
 
 ## Testing
 
-Tests use xunit and mirror the src folder structure (`Commands/`, `Infrastructure/`, `Models/`). Environment variable tests use `[Collection("Environment")]` for sequential execution. `CliConfig` tests use temp directories. `CredentialResolver` tests pass explicit `CliConfig` instances. `MigrationLoader` tests use temp directories with YAML files. `StatisticDefinitionStore` tests use temp directories and cover load/save/validate/map logic. Runner, LedgerService, and the live-API parts of `SyntheticPlayerService`/`StatisticSeedService` are not unit-tested (they make PlayFab API calls) — only their pure logic (e.g. `StatisticSeedService.ParseColumnSpec`/`ValidateColumns`/`MergeScores`) is.
+Tests use xunit and mirror the src folder structure (`Commands/`, `Infrastructure/`, `Models/`). Environment variable tests use `[Collection("Environment")]` for sequential execution. `CliConfig` tests use temp directories. `CredentialResolver` tests pass explicit `CliConfig` instances. `MigrationLoader` tests use temp directories with YAML files. `StatisticDefinitionStore` and `LeaderboardDefinitionStore` tests use temp directories and cover load/save/validate/map logic. `StatisticReconciler` and `LeaderboardReconciler` tests cover all reconciliation scenarios (create/delete/recreate/synced/drift, flag gating, case insensitivity). `MigrationGenerator` tests cover both statistic and leaderboard migration generation. Runner, LedgerService, and the live-API parts of `SyntheticPlayerService`/`StatisticSeedService` are not unit-tested (they make PlayFab API calls) — only their pure logic (e.g. `StatisticSeedService.ParseColumnSpec`/`ValidateColumns`/`MergeScores`) is.

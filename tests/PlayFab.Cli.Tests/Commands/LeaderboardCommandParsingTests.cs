@@ -86,4 +86,36 @@ public class LeaderboardCommandParsingTests
         Assert.Empty(result.Errors);
         Assert.Equal("GLOBAL", result.GetValue(_globalOptions.TitleId));
     }
+
+    // --- pull ---
+
+    [Fact]
+    public void LeaderboardPull_ParsesWithNameOption()
+    {
+        var result = _rootCommand.Parse("leaderboard pull --name TopScores");
+        Assert.Empty(result.Errors);
+    }
+
+    [Fact]
+    public void LeaderboardPull_ParsesWithAllOption()
+    {
+        var result = _rootCommand.Parse("leaderboard pull --all");
+        Assert.Empty(result.Errors);
+    }
+
+    [Fact]
+    public void LeaderboardPull_ParsesLeaderboardsDirOption()
+    {
+        var result = _rootCommand.Parse("leaderboard --leaderboards-dir custom/path pull --all");
+        Assert.Empty(result.Errors);
+    }
+
+    [Fact]
+    public void LeaderboardPull_GlobalOptionsPropagated()
+    {
+        var result = _rootCommand.Parse("--title-id GLOBAL leaderboard pull --all");
+
+        Assert.Empty(result.Errors);
+        Assert.Equal("GLOBAL", result.GetValue(_globalOptions.TitleId));
+    }
 }

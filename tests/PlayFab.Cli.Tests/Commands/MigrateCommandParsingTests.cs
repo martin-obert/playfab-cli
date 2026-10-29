@@ -144,4 +144,64 @@ public class MigrateCommandParsingTests
         Assert.Empty(result.Errors);
         Assert.Equal("GLOBAL", result.GetValue(_globalOptions.TitleId));
     }
+
+    // --- migrate plan leaderboards ---
+
+    [Fact]
+    public void MigratePlanLeaderboards_ParsesWithoutArgs()
+    {
+        var result = _rootCommand.Parse("migrate plan leaderboards");
+        Assert.Empty(result.Errors);
+    }
+
+    [Fact]
+    public void MigratePlanLeaderboards_ParsesLeaderboardsDirOption()
+    {
+        var result = _rootCommand.Parse("migrate plan leaderboards --leaderboards-dir custom/path");
+        Assert.Empty(result.Errors);
+    }
+
+    [Fact]
+    public void MigratePlanLeaderboards_ParsesNameOption()
+    {
+        var result = _rootCommand.Parse("migrate plan leaderboards --name TopScores");
+        Assert.Empty(result.Errors);
+    }
+
+    [Fact]
+    public void MigratePlanLeaderboards_ParsesIncludeDeletesOption()
+    {
+        var result = _rootCommand.Parse("migrate plan leaderboards --include-deletes");
+        Assert.Empty(result.Errors);
+    }
+
+    [Fact]
+    public void MigratePlanLeaderboards_ParsesAllowRecreateOption()
+    {
+        var result = _rootCommand.Parse("migrate plan leaderboards --allow-recreate");
+        Assert.Empty(result.Errors);
+    }
+
+    [Fact]
+    public void MigratePlanLeaderboards_ParsesAllFlags()
+    {
+        var result = _rootCommand.Parse("migrate plan leaderboards --include-deletes --allow-recreate --leaderboards-dir lbs --name TopScores");
+        Assert.Empty(result.Errors);
+    }
+
+    [Fact]
+    public void MigratePlanLeaderboards_InheritsMigrationsDirFromGroup()
+    {
+        var result = _rootCommand.Parse("migrate --migrations-dir ./custom plan leaderboards");
+        Assert.Empty(result.Errors);
+    }
+
+    [Fact]
+    public void MigratePlanLeaderboards_InheritsGlobalOptions()
+    {
+        var result = _rootCommand.Parse("--title-id GLOBAL migrate plan leaderboards");
+
+        Assert.Empty(result.Errors);
+        Assert.Equal("GLOBAL", result.GetValue(_globalOptions.TitleId));
+    }
 }
