@@ -122,7 +122,7 @@ Constants and sets live in `Models/OperationTypes.cs`. To add a new operation ty
 **Key infrastructure classes:**
 - `MigrationLoader` — discovers, parses (YamlDotNet), and validates YAML files (including batch form and statistic/leaderboard-step validation)
 - `MigrationLedgerService` — reads/writes the ledger JSON from PlayFab Title Internal Data
-- `MigrationRunner` — executes up/down steps via PlayFab Admin API (expands batch steps into individual API calls) and Progression API (statistic and leaderboard definitions), updates ledger
+- `MigrationRunner` — executes up/down steps via PlayFab Admin API (expands batch steps into individual API calls) and Progression API (statistic and leaderboard definitions), updates ledger. Every PlayFab call goes through `ExecuteWithThrottleRetryAsync`, which retries on `PlayFabErrorCode.APIClientRequestRateLimitExceeded` using the server-specified `PlayFabError.RetryAfterSeconds` cooldown (up to 5 attempts) rather than a guessed delay — large migrations (e.g. a generated batch of hundreds of statistics/leaderboards) can otherwise get throttled. `create-statistic`/`create-leaderboard` additionally treat "already exists" (`DuplicateStatisticName`/`LeaderboardNameConflict`) as success, so a `migrate up` retried after a partial failure resumes cleanly instead of failing immediately on the first already-created definition — the ledger is only written after *all* steps succeed, so a failed run's successfully-created definitions aren't otherwise recorded anywhere.
 - `PlayFabAuth` — resolves credentials, configures `PlayFabSettings.staticSettings`, and (`RequireEntityCredentialsAsync`) acquires the entity token Progression API calls need
 
 ### Synthetic Players, Statistic Seeding & Leaderboard Readback
