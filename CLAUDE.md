@@ -151,9 +151,10 @@ maxQueryableVersions: 3
 columns:
   - name: Value
     aggregationMethod: Sum
+    type: number             # string (default) | number | bool
 ```
 
-Only desired-state fields are stored. Runtime metadata (version, created, lastResetTime, linkedLeaderboardNames) is excluded — it belongs to PlayFab and would drift.
+Only desired-state fields are stored. Runtime metadata (version, created, lastResetTime, linkedLeaderboardNames) is excluded — it belongs to PlayFab and would drift. The `type` field on columns is a local semantic annotation (PlayFab doesn't have a column type concept); it defaults to `string` when omitted.
 
 **`playfab stats pull --statistic <name> [--statistics-dir <path>]`** fetches a single statistic definition from PlayFab via `GetStatisticDefinitionAsync` and writes it as a YAML file. **`playfab stats pull --all [--statistics-dir <path>]`** fetches all statistics via `ListStatisticDefinitionsAsync` (paginated). `--statistics-dir` defaults to `statistics/`. Overwrites existing files (pull is always a fresh snapshot).
 

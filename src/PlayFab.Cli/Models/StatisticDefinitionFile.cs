@@ -13,4 +13,5 @@ public sealed class StatisticColumnDefinition
 {
     public required string Name { get; init; }
     public required string AggregationMethod { get; init; }
+    public string Type { get; init; } = "string";
 }

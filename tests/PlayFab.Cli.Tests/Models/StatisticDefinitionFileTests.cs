@@ -78,6 +78,41 @@ public class StatisticDefinitionFileTests
     }
 
     [Fact]
+    public void Deserialize_ColumnTypeExplicit_Works()
+    {
+        var yaml = """
+            name: PlayerScore
+            columns:
+              - name: Score
+                aggregationMethod: Sum
+                type: number
+              - name: Active
+                aggregationMethod: Last
+                type: bool
+            """;
+
+        var def = Deserializer.Deserialize<StatisticDefinitionFile>(yaml);
+
+        Assert.Equal("number", def.Columns[0].Type);
+        Assert.Equal("bool", def.Columns[1].Type);
+    }
+
+    [Fact]
+    public void Deserialize_ColumnTypeOmitted_DefaultsToString()
+    {
+        var yaml = """
+            name: PlayerScore
+            columns:
+              - name: Value
+                aggregationMethod: Sum
+            """;
+
+        var def = Deserializer.Deserialize<StatisticDefinitionFile>(yaml);
+
+        Assert.Equal("string", def.Columns[0].Type);
+    }
+
+    [Fact]
     public void Deserialize_ExtraFields_Ignored()
     {
         var yaml = """

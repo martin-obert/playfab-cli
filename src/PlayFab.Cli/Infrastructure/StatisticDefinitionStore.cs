@@ -82,6 +82,9 @@ public static class StatisticDefinitionStore
 
                 if (!ValidationConstants.ValidAggregationMethods.Contains(col.AggregationMethod))
                     errors.Add($"columns[{i}] has invalid aggregationMethod '{col.AggregationMethod}'.");
+
+                if (!ValidationConstants.ValidColumnTypes.Contains(col.Type))
+                    errors.Add($"columns[{i}] has invalid type '{col.Type}'.");
             }
         }
 

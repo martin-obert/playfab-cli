@@ -400,6 +400,53 @@ public class StatisticDefinitionStoreTests : IDisposable
         Assert.Empty(errors);
     }
 
+    [Fact]
+    public void Validate_InvalidColumnType_ReturnsError()
+    {
+        var definition = new StatisticDefinitionFile
+        {
+            Name = "PlayerScore",
+            Columns = [new StatisticColumnDefinition { Name = "Value", AggregationMethod = "Sum", Type = "float" }],
+        };
+
+        var errors = StatisticDefinitionStore.Validate(definition);
+
+        Assert.Contains(errors, e => e.Contains("invalid type"));
+    }
+
+    [Theory]
+    [InlineData("string")]
+    [InlineData("number")]
+    [InlineData("bool")]
+    public void Validate_AllValidColumnTypes_NoErrors(string type)
+    {
+        var definition = new StatisticDefinitionFile
+        {
+            Name = "PlayerScore",
+            Columns = [new StatisticColumnDefinition { Name = "Value", AggregationMethod = "Sum", Type = type }],
+        };
+
+        var errors = StatisticDefinitionStore.Validate(definition);
+
+        Assert.Empty(errors);
+    }
+
+    [Fact]
+    public void Validate_ColumnTypeDefaultsToString_NoErrors()
+    {
+        var definition = new StatisticDefinitionFile
+        {
+            Name = "PlayerScore",
+            Columns = [new StatisticColumnDefinition { Name = "Value", AggregationMethod = "Sum" }],
+        };
+
+        Assert.Equal("string", definition.Columns[0].Type);
+
+        var errors = StatisticDefinitionStore.Validate(definition);
+
+        Assert.Empty(errors);
+    }
+
     [Theory]
     [InlineData("Last")]
     [InlineData("Min")]
