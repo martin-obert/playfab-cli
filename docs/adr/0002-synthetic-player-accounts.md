@@ -33,7 +33,7 @@ Created accounts are stored per-title in `~/.playfab/synthetic-players-{TITLEID}
   "players": [
     {
       "playFabId": "A1B2C3D4E5F6",
-      "customId": "synth-3f8a1b2c...",
+      "serverCustomId": "synth-3f8a1b2c...",
       "displayName": "Josie_Marks42",
       "createdAt": "2026-10-29T14:30:00Z"
     }

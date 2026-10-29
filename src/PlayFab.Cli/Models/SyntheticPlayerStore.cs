@@ -9,7 +9,7 @@ public sealed class SyntheticPlayerStore
 public sealed class SyntheticPlayer
 {
     public required string PlayFabId { get; init; }
-    public required string CustomId { get; init; }
+    public required string ServerCustomId { get; init; }
     public required string DisplayName { get; init; }
     public required DateTime CreatedAt { get; init; }
 }

@@ -35,14 +35,14 @@ public class SyntheticPlayerStoreTests
                 new SyntheticPlayer
                 {
                     PlayFabId = "PF001",
-                    CustomId = "synth-abc",
+                    ServerCustomId = "synth-abc",
                     DisplayName = "TestUser1",
                     CreatedAt = new DateTime(2026, 10, 29, 12, 0, 0, DateTimeKind.Utc),
                 },
                 new SyntheticPlayer
                 {
                     PlayFabId = "PF002",
-                    CustomId = "synth-def",
+                    ServerCustomId = "synth-def",
                     DisplayName = "TestUser2",
                     CreatedAt = new DateTime(2026, 10, 29, 13, 0, 0, DateTimeKind.Utc),
                 },
@@ -55,7 +55,7 @@ public class SyntheticPlayerStoreTests
         Assert.Equal("ABCD", deserialized.TitleId);
         Assert.Equal(2, deserialized.Players.Count);
         Assert.Equal("PF001", deserialized.Players[0].PlayFabId);
-        Assert.Equal("synth-abc", deserialized.Players[0].CustomId);
+        Assert.Equal("synth-abc", deserialized.Players[0].ServerCustomId);
         Assert.Equal("TestUser1", deserialized.Players[0].DisplayName);
         Assert.Equal("PF002", deserialized.Players[1].PlayFabId);
     }
@@ -69,7 +69,7 @@ public class SyntheticPlayerStoreTests
               "players": [
                 {
                   "playFabId": "ID1",
-                  "customId": "synth-123",
+                  "serverCustomId": "synth-123",
                   "displayName": "CoolNinja",
                   "createdAt": "2026-10-29T14:30:00Z"
                 }

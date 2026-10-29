@@ -192,12 +192,12 @@ public static class PlayersCommands
                     .Title("Synthetic Players")
                     .Border(TableBorder.Rounded);
                 table.AddColumn("PlayFab ID");
-                table.AddColumn("Custom ID");
+                table.AddColumn("Server Custom ID");
                 table.AddColumn("Display Name");
                 table.AddColumn("Created At");
 
                 foreach (var player in store.Players)
-                    table.AddRow(player.PlayFabId, player.CustomId, player.DisplayName, player.CreatedAt.ToString("o"));
+                    table.AddRow(player.PlayFabId, player.ServerCustomId, player.DisplayName, player.CreatedAt.ToString("o"));
 
                 AnsiConsole.Write(table);
             }

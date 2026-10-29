@@ -54,7 +54,7 @@ public class SyntheticPlayerServiceTests : IDisposable
                 new SyntheticPlayer
                 {
                     PlayFabId = "PF001",
-                    CustomId = "synth-abc",
+                    ServerCustomId = "synth-abc",
                     DisplayName = "TestUser",
                     CreatedAt = new DateTime(2026, 10, 29, 12, 0, 0, DateTimeKind.Utc),
                 },
@@ -67,7 +67,7 @@ public class SyntheticPlayerServiceTests : IDisposable
         Assert.Equal("ABCD", loaded.TitleId);
         Assert.Single(loaded.Players);
         Assert.Equal("PF001", loaded.Players[0].PlayFabId);
-        Assert.Equal("synth-abc", loaded.Players[0].CustomId);
+        Assert.Equal("synth-abc", loaded.Players[0].ServerCustomId);
         Assert.Equal("TestUser", loaded.Players[0].DisplayName);
     }
 

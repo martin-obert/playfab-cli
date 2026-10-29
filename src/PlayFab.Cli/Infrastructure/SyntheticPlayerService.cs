@@ -53,12 +53,12 @@ public static class SyntheticPlayerService
 
     public static async Task<SyntheticPlayer> CreateAccountAsync(string displayName)
     {
-        var customId = $"synth-{Guid.NewGuid():N}";
+        var serverCustomId = $"synth-{Guid.NewGuid():N}";
 
         var loginResult = await PlayFabServerAPI.LoginWithServerCustomIdAsync(
             new ServerModels.LoginWithServerCustomIdRequest
             {
-                ServerCustomId = customId,
+                ServerCustomId = serverCustomId,
                 CreateAccount = true,
             });
 
@@ -82,7 +82,7 @@ public static class SyntheticPlayerService
         return new SyntheticPlayer
         {
             PlayFabId = playFabId,
-            CustomId = customId,
+            ServerCustomId = serverCustomId,
             DisplayName = displayName,
             CreatedAt = DateTime.UtcNow,
         };
