@@ -24,6 +24,8 @@ public static class PlayFabRetry
                 return result;
 
             var delaySeconds = result.Error.RetryAfterSeconds ?? 1;
+            var retryAt = DateTime.Now.AddSeconds(delaySeconds);
+            Console.WriteLine($"WARNING: Rate limited by PlayFab (attempt {attempt}/{MaxAttempts}); waiting until {retryAt:T} before retrying.");
             await Task.Delay(TimeSpan.FromSeconds(delaySeconds));
         }
     }
