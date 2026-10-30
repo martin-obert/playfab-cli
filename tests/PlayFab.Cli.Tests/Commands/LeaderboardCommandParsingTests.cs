@@ -118,4 +118,22 @@ public class LeaderboardCommandParsingTests
         Assert.Empty(result.Errors);
         Assert.Equal("GLOBAL", result.GetValue(_globalOptions.TitleId));
     }
+
+    // --- nuke ---
+
+    [Fact]
+    public void LeaderboardNuke_ParsesWithoutArgs()
+    {
+        var result = _rootCommand.Parse("leaderboard nuke");
+        Assert.Empty(result.Errors);
+    }
+
+    [Fact]
+    public void LeaderboardNuke_GlobalOptionsPropagated()
+    {
+        var result = _rootCommand.Parse("--title-id GLOBAL leaderboard nuke");
+
+        Assert.Empty(result.Errors);
+        Assert.Equal("GLOBAL", result.GetValue(_globalOptions.TitleId));
+    }
 }

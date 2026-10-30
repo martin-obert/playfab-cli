@@ -1,4 +1,5 @@
 using System.CommandLine;
+using PlayFab;
 using PlayFab.Cli.Infrastructure;
 using PlayFab.Cli.Models;
 using PlayFab.ProgressionModels;
@@ -25,6 +26,7 @@ public static class StatsCommands
         group.Add(CreateGetCommand(globalOptions));
         group.Add(CreateDefinitionCommand(globalOptions));
         group.Add(CreatePullCommand(globalOptions, statisticsDirOption));
+        group.Add(CreateNukeCommand(globalOptions));
         return group;
     }
 
@@ -462,6 +464,63 @@ public static class StatsCommands
                 StatisticDefinitionStore.Save(mapped, statisticsDir);
                 Console.WriteLine($"Saved {mapped.Name}.yml to '{statisticsDir}/'.");
             }
+        });
+
+        return command;
+    }
+
+    private static Command CreateNukeCommand(GlobalOptions globalOptions)
+    {
+        var command = new Command("nuke", "Delete ALL statistic definitions on the title. Irreversible.");
+
+        command.SetAction(async parseResult =>
+        {
+            var titleId = parseResult.GetValue(globalOptions.TitleId);
+            var secretKey = parseResult.GetValue(globalOptions.SecretKey);
+
+            await PlayFabAuth.RequireEntityCredentialsAsync(titleId, secretKey);
+
+            List<StatisticDefinitionFile> definitions;
+            try
+            {
+                definitions = await StatisticDefinitionStore.FetchAllFromPlayFabAsync();
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine(ex.Message);
+                return;
+            }
+
+            if (definitions.Count == 0)
+            {
+                Console.WriteLine("No statistic definitions to delete.");
+                return;
+            }
+
+            var total = definitions.Count;
+            var deleted = 0;
+            for (var i = 0; i < total; i++)
+            {
+                var name = definitions[i].Name;
+                Console.Write($"Deleting statistic {i + 1}/{total} ({name})...");
+
+                var result = await PlayFabRetry.ExecuteWithThrottleRetryAsync(() =>
+                    PlayFabProgressionAPI.DeleteStatisticDefinitionAsync(new DeleteStatisticDefinitionRequest { Name = name }));
+
+                if (result.Error is not null)
+                {
+                    Console.WriteLine($" FAILED: {result.Error.ErrorMessage}");
+                    continue;
+                }
+
+                Console.WriteLine(" done.");
+                deleted++;
+
+                if (total > 10)
+                    await Task.Delay(100);
+            }
+
+            Console.WriteLine($"{deleted}/{total} statistic definition(s) deleted.");
         });
 
         return command;

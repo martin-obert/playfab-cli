@@ -148,7 +148,7 @@ public static class MigrationRunner
             }).ToList()
             : [new StatisticColumn { Name = "Value", AggregationMethod = ParseAggregationMethod(step.AggregationMethod) }];
 
-        var result = await ExecuteWithThrottleRetryAsync(() => PlayFabProgressionAPI.CreateStatisticDefinitionAsync(new CreateStatisticDefinitionRequest
+        var result = await PlayFabRetry.ExecuteWithThrottleRetryAsync(() => PlayFabProgressionAPI.CreateStatisticDefinitionAsync(new CreateStatisticDefinitionRequest
         {
             Name = step.Name!,
             EntityType = step.EntityType ?? "title_player_account",
@@ -164,7 +164,7 @@ public static class MigrationRunner
 
     private static async Task DeleteStatisticDefinitionAsync(string name)
     {
-        var result = await ExecuteWithThrottleRetryAsync(() => PlayFabProgressionAPI.DeleteStatisticDefinitionAsync(new DeleteStatisticDefinitionRequest { Name = name }));
+        var result = await PlayFabRetry.ExecuteWithThrottleRetryAsync(() => PlayFabProgressionAPI.DeleteStatisticDefinitionAsync(new DeleteStatisticDefinitionRequest { Name = name }));
         if (result.Error is not null)
             throw new InvalidOperationException($"DeleteStatisticDefinition failed for '{name}': {result.Error.ErrorMessage}");
     }
@@ -204,7 +204,7 @@ public static class MigrationRunner
             return column;
         }).ToList();
 
-        var result = await ExecuteWithThrottleRetryAsync(() => PlayFabProgressionAPI.CreateLeaderboardDefinitionAsync(new CreateLeaderboardDefinitionRequest
+        var result = await PlayFabRetry.ExecuteWithThrottleRetryAsync(() => PlayFabProgressionAPI.CreateLeaderboardDefinitionAsync(new CreateLeaderboardDefinitionRequest
         {
             Name = step.Name!,
             EntityType = step.EntityType ?? "title_player_account",
@@ -220,7 +220,7 @@ public static class MigrationRunner
 
     private static async Task DeleteLeaderboardDefinitionAsync(string name)
     {
-        var result = await ExecuteWithThrottleRetryAsync(() => PlayFabProgressionAPI.DeleteLeaderboardDefinitionAsync(new DeleteLeaderboardDefinitionRequest { Name = name }));
+        var result = await PlayFabRetry.ExecuteWithThrottleRetryAsync(() => PlayFabProgressionAPI.DeleteLeaderboardDefinitionAsync(new DeleteLeaderboardDefinitionRequest { Name = name }));
         if (result.Error is not null)
             throw new InvalidOperationException($"DeleteLeaderboardDefinition failed for '{name}': {result.Error.ErrorMessage}");
     }
@@ -242,38 +242,15 @@ public static class MigrationRunner
 
     private static async Task SetTitleDataAsync(string key, string? value)
     {
-        var result = await ExecuteWithThrottleRetryAsync(() => PlayFabAdminAPI.SetTitleDataAsync(new SetTitleDataRequest { Key = key, Value = value }));
+        var result = await PlayFabRetry.ExecuteWithThrottleRetryAsync(() => PlayFabAdminAPI.SetTitleDataAsync(new SetTitleDataRequest { Key = key, Value = value }));
         if (result.Error is not null)
             throw new InvalidOperationException($"SetTitleData failed for key '{key}': {result.Error.ErrorMessage}");
     }
 
     private static async Task SetTitleInternalDataAsync(string key, string? value)
     {
-        var result = await ExecuteWithThrottleRetryAsync(() => PlayFabAdminAPI.SetTitleInternalDataAsync(new SetTitleDataRequest { Key = key, Value = value }));
+        var result = await PlayFabRetry.ExecuteWithThrottleRetryAsync(() => PlayFabAdminAPI.SetTitleInternalDataAsync(new SetTitleDataRequest { Key = key, Value = value }));
         if (result.Error is not null)
             throw new InvalidOperationException($"SetTitleInternalData failed for key '{key}': {result.Error.ErrorMessage}");
-    }
-
-    /// <summary>
-    /// Retries a PlayFab call when throttled (PlayFabErrorCode.APIClientRequestRateLimitExceeded),
-    /// waiting PlayFabError.RetryAfterSeconds (the server-specified cooldown) instead of guessing a delay.
-    /// </summary>
-    private static async Task<PlayFabResult<TResult>> ExecuteWithThrottleRetryAsync<TResult>(Func<Task<PlayFabResult<TResult>>> apiCall)
-        where TResult : PlayFab.Internal.PlayFabResultCommon
-    {
-        const int maxAttempts = 5;
-        var attempt = 0;
-
-        while (true)
-        {
-            attempt++;
-            var result = await apiCall();
-
-            if (result.Error is null || result.Error.Error != PlayFabErrorCode.APIClientRequestRateLimitExceeded || attempt >= maxAttempts)
-                return result;
-
-            var delaySeconds = result.Error.RetryAfterSeconds ?? 1;
-            await Task.Delay(TimeSpan.FromSeconds(delaySeconds));
-        }
     }
 }

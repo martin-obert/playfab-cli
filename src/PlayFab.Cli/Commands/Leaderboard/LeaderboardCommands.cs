@@ -25,6 +25,7 @@ public static class LeaderboardCommands
         group.Add(CreateGetCommand(globalOptions));
         group.Add(CreateDefinitionCommand(globalOptions));
         group.Add(CreatePullCommand(globalOptions, leaderboardsDirOption));
+        group.Add(CreateNukeCommand(globalOptions));
         return group;
     }
 
@@ -289,6 +290,63 @@ public static class LeaderboardCommands
                 LeaderboardDefinitionStore.Save(mapped, leaderboardsDir);
                 Console.WriteLine($"Saved {mapped.Name}.yml to '{leaderboardsDir}/'.");
             }
+        });
+
+        return command;
+    }
+
+    private static Command CreateNukeCommand(GlobalOptions globalOptions)
+    {
+        var command = new Command("nuke", "Delete ALL leaderboard definitions on the title. Irreversible.");
+
+        command.SetAction(async parseResult =>
+        {
+            var titleId = parseResult.GetValue(globalOptions.TitleId);
+            var secretKey = parseResult.GetValue(globalOptions.SecretKey);
+
+            await PlayFabAuth.RequireEntityCredentialsAsync(titleId, secretKey);
+
+            List<LeaderboardDefinitionFile> definitions;
+            try
+            {
+                definitions = await LeaderboardDefinitionStore.FetchAllFromPlayFabAsync();
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine(ex.Message);
+                return;
+            }
+
+            if (definitions.Count == 0)
+            {
+                Console.WriteLine("No leaderboard definitions to delete.");
+                return;
+            }
+
+            var total = definitions.Count;
+            var deleted = 0;
+            for (var i = 0; i < total; i++)
+            {
+                var name = definitions[i].Name;
+                Console.Write($"Deleting leaderboard {i + 1}/{total} ({name})...");
+
+                var result = await PlayFabRetry.ExecuteWithThrottleRetryAsync(() =>
+                    PlayFabProgressionAPI.DeleteLeaderboardDefinitionAsync(new DeleteLeaderboardDefinitionRequest { Name = name }));
+
+                if (result.Error is not null)
+                {
+                    Console.WriteLine($" FAILED: {result.Error.ErrorMessage}");
+                    continue;
+                }
+
+                Console.WriteLine(" done.");
+                deleted++;
+
+                if (total > 10)
+                    await Task.Delay(100);
+            }
+
+            Console.WriteLine($"{deleted}/{total} leaderboard definition(s) deleted.");
         });
 
         return command;

@@ -163,4 +163,20 @@ public class StatsCommandParsingTests
         var result = _rootCommand.Parse("stats --statistics-dir custom/path pull --all");
         Assert.Empty(result.Errors);
     }
+
+    [Fact]
+    public void StatsNuke_ParsesWithoutArgs()
+    {
+        var result = _rootCommand.Parse("stats nuke");
+        Assert.Empty(result.Errors);
+    }
+
+    [Fact]
+    public void StatsNuke_GlobalOptionsPropagated()
+    {
+        var result = _rootCommand.Parse("--title-id GLOBAL stats nuke");
+
+        Assert.Empty(result.Errors);
+        Assert.Equal("GLOBAL", result.GetValue(_globalOptions.TitleId));
+    }
 }

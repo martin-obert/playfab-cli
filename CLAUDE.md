@@ -122,8 +122,9 @@ Constants and sets live in `Models/OperationTypes.cs`. To add a new operation ty
 **Key infrastructure classes:**
 - `MigrationLoader` — discovers, parses (YamlDotNet), and validates YAML files (including batch form and statistic/leaderboard-step validation)
 - `MigrationLedgerService` — reads/writes the ledger JSON from PlayFab Title Internal Data
-- `MigrationRunner` — executes up/down steps via PlayFab Admin API (expands batch steps into individual API calls) and Progression API (statistic and leaderboard definitions), updates ledger. Every PlayFab call goes through `ExecuteWithThrottleRetryAsync`, which retries on `PlayFabErrorCode.APIClientRequestRateLimitExceeded` using the server-specified `PlayFabError.RetryAfterSeconds` cooldown (up to 5 attempts) rather than a guessed delay — large migrations (e.g. a generated batch of hundreds of statistics/leaderboards) can otherwise get throttled. `create-statistic`/`create-leaderboard` additionally treat "already exists" (`DuplicateStatisticName`/`LeaderboardNameConflict`) as success, so a `migrate up` retried after a partial failure resumes cleanly instead of failing immediately on the first already-created definition — the ledger is only written after *all* steps succeed, so a failed run's successfully-created definitions aren't otherwise recorded anywhere.
+- `MigrationRunner` — executes up/down steps via PlayFab Admin API (expands batch steps into individual API calls) and Progression API (statistic and leaderboard definitions), updates ledger. `create-statistic`/`create-leaderboard` treat "already exists" (`DuplicateStatisticName`/`LeaderboardNameConflict`) as success, so a `migrate up` retried after a partial failure resumes cleanly instead of failing immediately on the first already-created definition — the ledger is only written after *all* steps succeed, so a failed run's successfully-created definitions aren't otherwise recorded anywhere.
 - `PlayFabAuth` — resolves credentials, configures `PlayFabSettings.staticSettings`, and (`RequireEntityCredentialsAsync`) acquires the entity token Progression API calls need
+- `PlayFabRetry.ExecuteWithThrottleRetryAsync` — shared by every PlayFab call in `MigrationRunner` plus the `stats nuke`/`leaderboard nuke` commands; retries on `PlayFabErrorCode.APIClientRequestRateLimitExceeded` using the server-specified `PlayFabError.RetryAfterSeconds` cooldown (up to 5 attempts) rather than a guessed delay — large batches (e.g. a generated migration covering hundreds of statistics/leaderboards, or nuking that many) can otherwise get throttled.
 
 ### Synthetic Players, Statistic Seeding & Leaderboard Readback
 
@@ -136,6 +137,8 @@ Constants and sets live in `Models/OperationTypes.cs`. To add a new operation ty
 `playfab stats get --statistic <name> (--all | --player-id <id> ...)` reads a statistic's current stored value straight from `GetStatisticsAsync`, bypassing Game Manager — useful for verifying a seed actually landed when the UI doesn't seem to reflect it (e.g. to tell apart a real write-path bug from a Game Manager display/propagation gap). Shows each player's `Version` and per-column values (`—` where no value is recorded yet), plus the statistic's current definition version with a warning if any player's value version doesn't match it.
 
 `playfab stats definition --statistic <name>` displays the statistic's *definition* (not values) straight from `GetStatisticDefinitionAsync`: entity type, current version, reset interval, max queryable versions, created/last-reset timestamps, linked leaderboard names, and each column's aggregation method. The `linkedLeaderboardNames` field is the quickest way to check whether a statistic has any leaderboard attached to it at all.
+
+`playfab stats nuke` deletes **every** statistic definition on the title — fetches all definitions via `StatisticDefinitionStore.FetchAllFromPlayFabAsync` and calls `DeleteStatisticDefinitionAsync` for each, continuing past individual failures (e.g. a statistic still linked to a leaderboard) and reporting a final `deleted/total` count. Irreversible, and unlike `players delete`, not scoped to anything this tool tracked — it targets whatever actually exists on the title.
 
 ### Statistic Definition Files (Desired-State)
 
@@ -213,6 +216,8 @@ Only desired-state fields are stored. Runtime metadata (version, created, lastRe
 `playfab leaderboard get --name <name> [--page-size N] [--starting-position N] [--version N]` reads a leaderboard's ranked entries straight from `PlayFabProgressionAPI.GetLeaderboardAsync` (`Commands/Leaderboard/LeaderboardCommands.cs`) — unlike `stats get`, this isn't scoped to tracked synthetic players; it returns a page of the real ranking (rank, entity ID, display name, per-column scores), matching how Game Manager itself would read it.
 
 `playfab leaderboard definition --name <name>` displays the leaderboard's *definition* straight from `GetLeaderboardDefinitionAsync`: entity type, current version, size limit, reset interval, max queryable versions, created/last-reset timestamps, and each column's sort direction plus linked statistic (if any).
+
+`playfab leaderboard nuke` deletes **every** leaderboard definition on the title — same pattern as `stats nuke`: fetches all definitions via `LeaderboardDefinitionStore.FetchAllFromPlayFabAsync`, calls `DeleteLeaderboardDefinitionAsync` for each, continues past individual failures, reports a final `deleted/total` count. Irreversible and unscoped. If clearing both and a statistic's delete fails because a leaderboard still links to it, run `leaderboard nuke` first.
 
 ### Credential Resolution (`CredentialResolver`)
 
