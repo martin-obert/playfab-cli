@@ -330,12 +330,13 @@ public static class LeaderboardCommands
                 var name = definitions[i].Name;
                 Console.Write($"Deleting leaderboard {i + 1}/{total} ({name})...");
 
-                var result = await PlayFabRetry.ExecuteWithThrottleRetryAsync(() =>
-                    PlayFabProgressionAPI.DeleteLeaderboardDefinitionAsync(new DeleteLeaderboardDefinitionRequest { Name = name }));
-
-                if (result.Error is not null)
+                try
                 {
-                    Console.WriteLine($" FAILED: {result.Error.ErrorMessage}");
+                    await LinkedDefinitionDeleter.DeleteLeaderboardAsync(name);
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($" FAILED: {ex.Message}");
                     continue;
                 }
 

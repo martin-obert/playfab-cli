@@ -162,12 +162,7 @@ public static class MigrationRunner
             throw new InvalidOperationException($"CreateStatisticDefinition failed for '{step.Name}': {result.Error.ErrorMessage}");
     }
 
-    private static async Task DeleteStatisticDefinitionAsync(string name)
-    {
-        var result = await PlayFabRetry.ExecuteWithThrottleRetryAsync(() => PlayFabProgressionAPI.DeleteStatisticDefinitionAsync(new DeleteStatisticDefinitionRequest { Name = name }));
-        if (result.Error is not null)
-            throw new InvalidOperationException($"DeleteStatisticDefinition failed for '{name}': {result.Error.ErrorMessage}");
-    }
+    private static Task DeleteStatisticDefinitionAsync(string name) => LinkedDefinitionDeleter.DeleteStatisticAsync(name);
 
     private static async Task ExecuteLeaderboardStepAsync(MigrationStep step)
     {
@@ -218,12 +213,7 @@ public static class MigrationRunner
             throw new InvalidOperationException($"CreateLeaderboardDefinition failed for '{step.Name}': {result.Error.ErrorMessage}");
     }
 
-    private static async Task DeleteLeaderboardDefinitionAsync(string name)
-    {
-        var result = await PlayFabRetry.ExecuteWithThrottleRetryAsync(() => PlayFabProgressionAPI.DeleteLeaderboardDefinitionAsync(new DeleteLeaderboardDefinitionRequest { Name = name }));
-        if (result.Error is not null)
-            throw new InvalidOperationException($"DeleteLeaderboardDefinition failed for '{name}': {result.Error.ErrorMessage}");
-    }
+    private static Task DeleteLeaderboardDefinitionAsync(string name) => LinkedDefinitionDeleter.DeleteLeaderboardAsync(name);
 
     private static PlayFab.ProgressionModels.StatisticAggregationMethod ParseAggregationMethod(string? value) =>
         Enum.Parse<PlayFab.ProgressionModels.StatisticAggregationMethod>(value ?? "Last", ignoreCase: true);
