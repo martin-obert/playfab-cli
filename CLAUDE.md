@@ -122,8 +122,10 @@ Constants and sets live in `Models/OperationTypes.cs`. To add a new operation ty
 **Key infrastructure classes:**
 - `MigrationLoader` — discovers, parses (YamlDotNet), and validates YAML files (including batch form and statistic/leaderboard-step validation)
 - `MigrationLedgerService` — reads/writes the ledger JSON from PlayFab Title Internal Data
-- `MigrationRunner` — executes up/down steps via PlayFab Admin API (expands batch steps into individual API calls) and Progression API (statistic and leaderboard definitions), updates ledger. Every PlayFab call goes through `ExecuteWithThrottleRetryAsync`, which retries on `PlayFabErrorCode.APIClientRequestRateLimitExceeded` using the server-specified `PlayFabError.RetryAfterSeconds` cooldown (up to 5 attempts) rather than a guessed delay — large migrations (e.g. a generated batch of hundreds of statistics/leaderboards) can otherwise get throttled. `create-statistic`/`create-leaderboard` additionally treat "already exists" (`DuplicateStatisticName`/`LeaderboardNameConflict`) as success, so a `migrate up` retried after a partial failure resumes cleanly instead of failing immediately on the first already-created definition — the ledger is only written after *all* steps succeed, so a failed run's successfully-created definitions aren't otherwise recorded anywhere.
+- `MigrationRunner` — executes up/down steps via PlayFab Admin API (expands batch steps into individual API calls) and Progression API (statistic and leaderboard definitions), updates ledger. `create-statistic`/`create-leaderboard` treat "already exists" (`DuplicateStatisticName`/`LeaderboardNameConflict`) as success, so a `migrate up` retried after a partial failure resumes cleanly instead of failing immediately on the first already-created definition — the ledger is only written after *all* steps succeed, so a failed run's successfully-created definitions aren't otherwise recorded anywhere. `delete-statistic`/`delete-leaderboard` delegate to `LinkedDefinitionDeleter` (see below) rather than calling the delete API directly.
+- `LinkedDefinitionDeleter` (`Infrastructure/LinkedDefinitionDeleter.cs`) — PlayFab rejects deleting a statistic or leaderboard while a link between them exists, **in both directions** (`PlayFabErrorCode.StatisticDefinitionModificationNotAllowedWhileLinked` / `LeaderboardDefinitionModificationNotAllowedWhileLinked` — confirmed empirically, not documented by PlayFab). There's no delete-time force flag, and `UpdateStatisticDefinitionRequest`/`UpdateLeaderboardDefinitionRequest` have no `Columns` field, so a link can only be broken via the dedicated `UnlinkLeaderboardFromStatisticAsync` endpoint. `DeleteStatisticAsync`/`DeleteLeaderboardAsync` attempt the delete, and on that specific error code, fetch the definition to discover the link(s) (`GetStatisticDefinitionAsync().LinkedLeaderboardNames` / `GetLeaderboardDefinitionAsync().Columns[].LinkedStatisticColumn`), unlink each (treating `NoLinkedStatisticToLeaderboard` as success — idempotent, same spirit as the create-side "already exists" handling above), then retry the delete once. This is what `MigrationRunner`'s delete steps and both `nuke` commands actually call — neither needs to know or care about link order.
 - `PlayFabAuth` — resolves credentials, configures `PlayFabSettings.staticSettings`, and (`RequireEntityCredentialsAsync`) acquires the entity token Progression API calls need
+- `PlayFabRetry.ExecuteWithThrottleRetryAsync` — shared by every PlayFab call in `MigrationRunner`, `LinkedDefinitionDeleter`, and the `stats nuke`/`leaderboard nuke` commands; retries on `PlayFabErrorCode.APIClientRequestRateLimitExceeded` using the server-specified `PlayFabError.RetryAfterSeconds` cooldown (up to 5 attempts) rather than a guessed delay — large batches (e.g. a generated migration covering hundreds of statistics/leaderboards, or nuking that many) can otherwise get throttled.
 
 ### Synthetic Players, Statistic Seeding & Leaderboard Readback
 
@@ -137,9 +139,130 @@ Constants and sets live in `Models/OperationTypes.cs`. To add a new operation ty
 
 `playfab stats definition --statistic <name>` displays the statistic's *definition* (not values) straight from `GetStatisticDefinitionAsync`: entity type, current version, reset interval, max queryable versions, created/last-reset timestamps, linked leaderboard names, and each column's aggregation method. The `linkedLeaderboardNames` field is the quickest way to check whether a statistic has any leaderboard attached to it at all.
 
+`playfab stats nuke` deletes **every** statistic definition on the title — fetches all definitions via `StatisticDefinitionStore.FetchAllFromPlayFabAsync` and calls `LinkedDefinitionDeleter.DeleteStatisticAsync` for each (auto-unlinking from any leaderboard first if needed — see `LinkedDefinitionDeleter` above), continuing past individual failures and reporting a final `deleted/total` count. Irreversible, and unlike `players delete`, not scoped to anything this tool tracked — it targets whatever actually exists on the title.
+
+### Statistic Definition Files (Desired-State)
+
+Statistic definitions can be stored as standalone YAML files in a `statistics/` folder (one file per statistic), serving as the desired-state source of truth for what statistics should exist on a PlayFab title. These are separate from migration files and use a dedicated strongly-typed model.
+
+**File format** — `statistics/<Name>.yml`:
+
+```yaml
+name: PlayerScore
+entityType: title_player_account
+resetInterval: Month
+maxQueryableVersions: 3
+columns:
+  - name: Value
+    aggregationMethod: Sum
+    type: int32               # see type vocabulary below; defaults to string when omitted
+```
+
+Only desired-state fields are stored. Runtime metadata (version, created, lastResetTime, linkedLeaderboardNames) is excluded — it belongs to PlayFab and would drift. The `type` field on columns is a local semantic annotation (PlayFab doesn't have a column type concept — statistic/leaderboard values are always transmitted as `List<string>` at the API level, regardless of this field); it defaults to `string` when omitted, is excluded from reconciler drift comparison, and drives `playfab codegen` (see below). Valid values, and the C# type each maps to (`Models/ValidationConstants.cs`, `CSharpTypeByColumnType`):
+
+| `type` | C# type | | `type` | C# type |
+|---|---|---|---|---|
+| `string` | `string` | | `uint8` | `byte` |
+| `bool` | `bool` | | `uint16` | `ushort` |
+| `number` (legacy alias for `float32`) | `float` | | `uint32` | `uint` |
+| `int8` | `sbyte` | | `uint64` | `ulong` |
+| `int16` | `short` | | `float32` | `float` |
+| `int32` | `int` | | `float64` | `double` |
+| `int64` | `long` | | | |
+
+**`playfab stats pull --statistic <name> [--statistics-dir <path>]`** fetches a single statistic definition from PlayFab via `GetStatisticDefinitionAsync` and writes it as a YAML file. **`playfab stats pull --all [--statistics-dir <path>]`** fetches all statistics via `ListStatisticDefinitionsAsync` (paginated). `--statistics-dir` defaults to `statistics/`. Overwrites existing files (pull is always a fresh snapshot).
+
+**Key classes:**
+- `StatisticDefinitionFile` / `StatisticColumnDefinition` (`Models/StatisticDefinitionFile.cs`) — strongly-typed model, separate from `MigrationStep`
+- `StatisticDefinitionStore` (`Infrastructure/StatisticDefinitionStore.cs`) — load/save/validate YAML files, map from PlayFab API response
+- `ValidationConstants` (`Models/ValidationConstants.cs`) — shared validation sets (aggregation methods, reset intervals, sort directions) used by both `MigrationLoader` and `StatisticDefinitionStore`
+- `StatisticReconciler` (`Infrastructure/StatisticReconciler.cs`) — pure comparison logic: takes local and remote definition lists, returns a list of `ReconcileAction`s (Create/Delete/Recreate/Synced/VersionConfigDrift)
+- `MigrationGenerator` (`Infrastructure/MigrationGenerator.cs`) — converts a `ReconcileResult` into a `MigrationDefinition` with symmetric up/down steps
+
+**`playfab migrate plan statistics [--statistics-dir <path>] [--include-deletes] [--allow-recreate]`** compares local definition files against live PlayFab state and generates a migration file for the differences. Inherits `--migrations-dir` from the `migrate` group. Reconciliation rules:
+- Local-only statistic → `create-statistic` step
+- PlayFab-only statistic → warned unless `--include-deletes` is set (then `delete-statistic`)
+- Column/entity-type mismatch → warned unless `--allow-recreate` is set (then destructive delete+create pair — loses player data)
+- Version config drift (resetInterval/maxQueryableVersions) → warned only (`update-statistic` not yet implemented)
+- Matching → synced, no action
+
+### Leaderboard Definition Files (Desired-State)
+
+Leaderboard definitions can be stored as standalone YAML files in a `leaderboards/` folder (one file per leaderboard), serving as the desired-state source of truth — same pattern as statistic definitions.
+
+**File format** — `leaderboards/<Name>.yml`:
+
+```yaml
+name: TopScores
+entityType: title_player_account
+resetInterval: Month
+maxQueryableVersions: 3
+sizeLimit: 500
+columns:
+  - name: Score
+    sortDirection: Descending
+    linkedStatistic: PlayerScore          # optional — paired with linkedStatisticColumn
+    linkedStatisticColumn: Value
+  - name: Rank
+    sortDirection: Ascending
+    type: int32                           # optional — see below
+```
+
+Only desired-state fields are stored. Runtime metadata (version, created, lastResetTime) is excluded. Column `linkedStatistic`/`linkedStatisticColumn` must both be set or both omitted — the loader validates pairing but not that the referenced statistic exists (PlayFab rejects bad references at `migrate up`).
+
+Like statistics, a leaderboard column has an optional local `type` annotation (same vocabulary and C# mapping as statistics, see above) used only by `playfab codegen` — never by PlayFab itself, and excluded from reconciler drift comparison. Unlike statistics, it has **no eager default**: when omitted, `playfab codegen` resolves it at generation time — if the column is linked (`linkedStatistic`/`linkedStatisticColumn` both set), it inherits that statistic's column type automatically (PlayFab keeps a linked column's values in sync with the statistic, so the C# type should track it too); otherwise it falls back to `string`. An explicit `type` on the leaderboard column always overrides the inferred one.
+
+**`playfab leaderboard pull --name <name> [--leaderboards-dir <path>]`** fetches a single leaderboard definition from PlayFab via `GetLeaderboardDefinitionAsync` and writes it as a YAML file. **`playfab leaderboard pull --all [--leaderboards-dir <path>]`** fetches all leaderboards via `ListLeaderboardDefinitionsAsync` (paginated). `--leaderboards-dir` defaults to `leaderboards/`. Overwrites existing files (pull is always a fresh snapshot).
+
+**Key classes:**
+- `LeaderboardDefinitionFile` / `LeaderboardColumnDefinition` (`Models/LeaderboardDefinitionFile.cs`) — strongly-typed model, separate from `MigrationStep`
+- `LeaderboardDefinitionStore` (`Infrastructure/LeaderboardDefinitionStore.cs`) — load/save/validate YAML files, map from PlayFab API response, paginated fetch
+- `LeaderboardReconciler` (`Infrastructure/LeaderboardReconciler.cs`) — pure comparison logic: takes local and remote definition lists, returns a list of `LeaderboardReconcileAction`s (Create/Delete/Recreate/Synced/VersionConfigDrift). Column comparison includes sort direction and linked statistic fields (case-insensitive). `SizeLimit` is compared as version config (warn-only drift).
+- `MigrationGenerator.GenerateLeaderboardMigration` (`Infrastructure/MigrationGenerator.cs`) — converts a `LeaderboardReconcileResult` into a `MigrationDefinition` with symmetric up/down steps
+
+**`playfab migrate plan leaderboards [--leaderboards-dir <path>] [--name <name>] [--include-deletes] [--allow-recreate]`** compares local definition files against live PlayFab state and generates a migration file for the differences. Inherits `--migrations-dir` from the `migrate` group. `--name` filters to a single leaderboard. Reconciliation rules mirror statistics:
+- Local-only leaderboard → `create-leaderboard` step
+- PlayFab-only leaderboard → warned unless `--include-deletes` is set (then `delete-leaderboard`)
+- Column/entity-type mismatch → warned unless `--allow-recreate` is set (then destructive delete+create pair — loses data)
+- Version config drift (resetInterval/maxQueryableVersions/sizeLimit) → warned only (`update-leaderboard` not yet implemented)
+- Matching → synced, no action
+
 `playfab leaderboard get --name <name> [--page-size N] [--starting-position N] [--version N]` reads a leaderboard's ranked entries straight from `PlayFabProgressionAPI.GetLeaderboardAsync` (`Commands/Leaderboard/LeaderboardCommands.cs`) — unlike `stats get`, this isn't scoped to tracked synthetic players; it returns a page of the real ranking (rank, entity ID, display name, per-column scores), matching how Game Manager itself would read it.
 
 `playfab leaderboard definition --name <name>` displays the leaderboard's *definition* straight from `GetLeaderboardDefinitionAsync`: entity type, current version, size limit, reset interval, max queryable versions, created/last-reset timestamps, and each column's sort direction plus linked statistic (if any).
+
+`playfab leaderboard nuke` deletes **every** leaderboard definition on the title — same pattern as `stats nuke`: fetches all definitions via `LeaderboardDefinitionStore.FetchAllFromPlayFabAsync`, calls `LinkedDefinitionDeleter.DeleteLeaderboardAsync` for each, continues past individual failures, reports a final `deleted/total` count. Irreversible and unscoped. Thanks to `LinkedDefinitionDeleter`'s auto-unlink-and-retry, `stats nuke` and `leaderboard nuke` are order-independent — either can run first.
+
+### Code Generation (`playfab codegen`)
+
+Generates strongly-typed C# classes from the local `statistics/`/`leaderboards/` desired-state definition files — purely local, no PlayFab calls. For a statistic/leaderboard consumer (e.g. a Unity client calling `GetStatisticsAsync`/`GetLeaderboardAsync`), this replaces hand-written POCOs and manual string parsing with generated, compile-time-checked types.
+
+- `playfab codegen statistics [--statistics-dir statistics] [--output-dir generated] [--namespace PlayFab.Generated] [--name <name>]` — one `.cs` file per statistic, written to `{output-dir}/Statistics/`.
+- `playfab codegen leaderboards [--leaderboards-dir leaderboards] [--statistics-dir statistics] [--output-dir generated] [--namespace PlayFab.Generated] [--name <name>]` — one `.cs` file per leaderboard, written to `{output-dir}/Leaderboards/`. Always loads statistics too (unfiltered, even when `--name` narrows the leaderboards), needed to resolve linked-column types.
+- `playfab codegen all [same dir/output/namespace options]` — runs both against the same output dir/namespace.
+- All three validate every definition first (`StatisticDefinitionStore.Validate`/`LeaderboardDefinitionStore.Validate`) and abort with the printed errors if any definition is invalid — nothing is written on a partial failure.
+- `--output-dir` defaults to `generated/` (sibling to `statistics/`/`leaderboards/`/`migrations/`, **not** under `src/PlayFab.Cli`) but is meant to be pointed straight at a consuming project (e.g. a Unity project's `Assets/Scripts/Generated`).
+
+**Generated class shape** (e.g. for a statistic `PlayerScore` with an `int32` column `Value`):
+
+```csharp
+public sealed class PlayerScoreStatistic
+{
+    public const string Name = "PlayerScore";
+    public int Value { get; set; }
+
+    public static PlayerScoreStatistic FromScores(IReadOnlyList<string> scores) =>
+        new() { Value = int.Parse(scores[0], CultureInfo.InvariantCulture) };
+
+    public List<string> ToScores() => [Value.ToString(CultureInfo.InvariantCulture)];
+}
+```
+
+A leaderboard entry class additionally gets plain `Rank`/`EntityId`/`DisplayName` properties (set independently by the caller — they come from the ranking entry, not the `Scores` list) ahead of the per-column properties. `FromScores`/`ToScores` always index by column position, matching PlayFab's positional `Scores` list — reordering columns in the YAML changes the generated indices. Parsing/formatting always use `CultureInfo.InvariantCulture` to avoid locale bugs (e.g. comma vs. dot decimal separator) on client devices. Generated files have **no PlayFab SDK dependency** — just `List<string>` in/out — so they drop into any consumer, including a Unity project using a different PlayFab SDK package than this CLI's `PlayFabAllSDK`.
+
+**Key classes:**
+- `CodeGenerator` (`Infrastructure/CodeGenerator.cs`) — pure logic, no I/O: `BuildStatisticClassSpec`/`BuildLeaderboardClassSpec` turn a definition into a `GeneratedClassSpec` (class/property names already sanitized to valid C# identifiers via `SanitizeIdentifier`, types already resolved via `ResolveCSharpType`/link inheritance); `Render` turns a spec into C# source text.
+- `CodegenCommands` (`Commands/Codegen/CodegenCommands.cs`) — the `statistics`/`leaderboards`/`all` subcommands: load + validate + generate + write `.cs` files.
 
 ### Credential Resolution (`CredentialResolver`)
 
@@ -160,4 +283,4 @@ Priority: CLI args → env vars (`PLAYFAB_TITLE_ID`, `PLAYFAB_SECRET_KEY`) → c
 
 ## Testing
 
-Tests use xunit and mirror the src folder structure (`Commands/`, `Infrastructure/`, `Models/`). Environment variable tests use `[Collection("Environment")]` for sequential execution. `CliConfig` tests use temp directories. `CredentialResolver` tests pass explicit `CliConfig` instances. `MigrationLoader` tests use temp directories with YAML files. Runner, LedgerService, and the live-API parts of `SyntheticPlayerService`/`StatisticSeedService` are not unit-tested (they make PlayFab API calls) — only their pure logic (e.g. `StatisticSeedService.ParseColumnSpec`/`ValidateColumns`/`MergeScores`) is.
+Tests use xunit and mirror the src folder structure (`Commands/`, `Infrastructure/`, `Models/`). Environment variable tests use `[Collection("Environment")]` for sequential execution. `CliConfig` tests use temp directories. `CredentialResolver` tests pass explicit `CliConfig` instances. `MigrationLoader` tests use temp directories with YAML files. `StatisticDefinitionStore` and `LeaderboardDefinitionStore` tests use temp directories and cover load/save/validate/map logic. `StatisticReconciler` and `LeaderboardReconciler` tests cover all reconciliation scenarios (create/delete/recreate/synced/drift, flag gating, case insensitivity). `MigrationGenerator` tests cover both statistic and leaderboard migration generation. `CodeGenerator` tests cover class-spec building (type resolution including link inheritance/override/fallback, identifier sanitization, column order preservation) and rendered-source assertions, all pure/no I/O. Runner, LedgerService, `LinkedDefinitionDeleter`, and the live-API parts of `SyntheticPlayerService`/`StatisticSeedService` are not unit-tested (they make PlayFab API calls) — only their pure logic (e.g. `StatisticSeedService.ParseColumnSpec`/`ValidateColumns`/`MergeScores`) is.

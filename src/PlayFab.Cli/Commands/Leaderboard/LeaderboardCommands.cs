@@ -1,6 +1,7 @@
 using System.CommandLine;
 using PlayFab;
 using PlayFab.Cli.Infrastructure;
+using PlayFab.Cli.Models;
 using PlayFab.ProgressionModels;
 using Spectre.Console;
 
@@ -12,9 +13,19 @@ public static class LeaderboardCommands
 {
     public static Command CreateGroup(GlobalOptions globalOptions)
     {
+        var leaderboardsDirOption = new Option<string>("--leaderboards-dir")
+        {
+            Description = "Path to leaderboard definitions directory",
+            DefaultValueFactory = _ => "leaderboards",
+            Recursive = true,
+        };
+
         var group = new Command("leaderboard", "Read back leaderboard rankings and definitions");
+        group.Add(leaderboardsDirOption);
         group.Add(CreateGetCommand(globalOptions));
         group.Add(CreateDefinitionCommand(globalOptions));
+        group.Add(CreatePullCommand(globalOptions, leaderboardsDirOption));
+        group.Add(CreateNukeCommand(globalOptions));
         return group;
     }
 
@@ -201,6 +212,142 @@ public static class LeaderboardCommands
                     }),
                 });
             }
+        });
+
+        return command;
+    }
+
+    private static Command CreatePullCommand(GlobalOptions globalOptions, Option<string> leaderboardsDirOption)
+    {
+        var nameOption = new Option<string?>("--name")
+        {
+            Description = "Name of a single leaderboard to pull",
+        };
+        var allOption = new Option<bool>("--all")
+        {
+            Description = "Pull all leaderboard definitions from PlayFab",
+        };
+
+        var command = new Command("pull", "Pull leaderboard definitions from PlayFab and save as YAML files");
+        command.Add(nameOption);
+        command.Add(allOption);
+
+        command.SetAction(async parseResult =>
+        {
+            var titleId = parseResult.GetValue(globalOptions.TitleId);
+            var secretKey = parseResult.GetValue(globalOptions.SecretKey);
+            var leaderboardName = parseResult.GetValue(nameOption);
+            var pullAll = parseResult.GetValue(allOption);
+            var leaderboardsDir = parseResult.GetValue(leaderboardsDirOption)!;
+
+            if (!pullAll && leaderboardName is null)
+            {
+                Console.Error.WriteLine("Specify --name <name> or --all.");
+                return;
+            }
+
+            await PlayFabAuth.RequireEntityCredentialsAsync(titleId, secretKey);
+
+            if (pullAll)
+            {
+                List<LeaderboardDefinitionFile> definitions;
+                try
+                {
+                    definitions = await LeaderboardDefinitionStore.FetchAllFromPlayFabAsync();
+                }
+                catch (Exception ex)
+                {
+                    Console.Error.WriteLine(ex.Message);
+                    return;
+                }
+
+                if (definitions.Count == 0)
+                {
+                    Console.WriteLine("No leaderboard definitions found.");
+                    return;
+                }
+
+                foreach (var mapped in definitions)
+                {
+                    LeaderboardDefinitionStore.Save(mapped, leaderboardsDir);
+                    Console.WriteLine($"  Saved {mapped.Name}.yml");
+                }
+
+                Console.WriteLine($"{definitions.Count} leaderboard definition(s) pulled to '{leaderboardsDir}/'.");
+            }
+            else
+            {
+                var result = await PlayFabProgressionAPI.GetLeaderboardDefinitionAsync(
+                    new GetLeaderboardDefinitionRequest { Name = leaderboardName! });
+
+                if (result.Error is not null)
+                {
+                    Console.Error.WriteLine($"Failed to get leaderboard '{leaderboardName}': {result.Error.ErrorMessage}");
+                    return;
+                }
+
+                var mapped = LeaderboardDefinitionStore.MapFromPlayFab(result.Result);
+                LeaderboardDefinitionStore.Save(mapped, leaderboardsDir);
+                Console.WriteLine($"Saved {mapped.Name}.yml to '{leaderboardsDir}/'.");
+            }
+        });
+
+        return command;
+    }
+
+    private static Command CreateNukeCommand(GlobalOptions globalOptions)
+    {
+        var command = new Command("nuke", "Delete ALL leaderboard definitions on the title. Irreversible.");
+
+        command.SetAction(async parseResult =>
+        {
+            var titleId = parseResult.GetValue(globalOptions.TitleId);
+            var secretKey = parseResult.GetValue(globalOptions.SecretKey);
+
+            await PlayFabAuth.RequireEntityCredentialsAsync(titleId, secretKey);
+
+            List<LeaderboardDefinitionFile> definitions;
+            try
+            {
+                definitions = await LeaderboardDefinitionStore.FetchAllFromPlayFabAsync();
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine(ex.Message);
+                return;
+            }
+
+            if (definitions.Count == 0)
+            {
+                Console.WriteLine("No leaderboard definitions to delete.");
+                return;
+            }
+
+            var total = definitions.Count;
+            var deleted = 0;
+            for (var i = 0; i < total; i++)
+            {
+                var name = definitions[i].Name;
+                Console.Write($"Deleting leaderboard {i + 1}/{total} ({name})...");
+
+                try
+                {
+                    await LinkedDefinitionDeleter.DeleteLeaderboardAsync(name);
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($" FAILED: {ex.Message}");
+                    continue;
+                }
+
+                Console.WriteLine(" done.");
+                deleted++;
+
+                if (total > 10)
+                    await Task.Delay(100);
+            }
+
+            Console.WriteLine($"{deleted}/{total} leaderboard definition(s) deleted.");
         });
 
         return command;

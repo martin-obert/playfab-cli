@@ -1,5 +1,7 @@
 using System.CommandLine;
+using PlayFab;
 using PlayFab.Cli.Infrastructure;
+using PlayFab.Cli.Models;
 using PlayFab.ProgressionModels;
 using Spectre.Console;
 
@@ -11,10 +13,20 @@ public static class StatsCommands
 {
     public static Command CreateGroup(GlobalOptions globalOptions)
     {
+        var statisticsDirOption = new Option<string>("--statistics-dir")
+        {
+            Description = "Path to statistic definitions directory",
+            DefaultValueFactory = _ => "statistics",
+            Recursive = true,
+        };
+
         var group = new Command("stats", "Seed and read back statistic values for synthetic test players");
+        group.Add(statisticsDirOption);
         group.Add(CreateSeedCommand(globalOptions));
         group.Add(CreateGetCommand(globalOptions));
         group.Add(CreateDefinitionCommand(globalOptions));
+        group.Add(CreatePullCommand(globalOptions, statisticsDirOption));
+        group.Add(CreateNukeCommand(globalOptions));
         return group;
     }
 
@@ -372,6 +384,144 @@ public static class StatsCommands
                     columns = columns.Select(c => new { name = c.Name, aggregationMethod = c.AggregationMethod.ToString() }),
                 });
             }
+        });
+
+        return command;
+    }
+
+    private static Command CreatePullCommand(GlobalOptions globalOptions, Option<string> statisticsDirOption)
+    {
+        var statisticOption = new Option<string?>("--statistic")
+        {
+            Description = "Name of a single statistic to pull",
+        };
+        var allOption = new Option<bool>("--all")
+        {
+            Description = "Pull all statistic definitions from PlayFab",
+        };
+
+        var command = new Command("pull", "Pull statistic definitions from PlayFab and save as YAML files");
+        command.Add(statisticOption);
+        command.Add(allOption);
+
+        command.SetAction(async parseResult =>
+        {
+            var titleId = parseResult.GetValue(globalOptions.TitleId);
+            var secretKey = parseResult.GetValue(globalOptions.SecretKey);
+            var statisticName = parseResult.GetValue(statisticOption);
+            var pullAll = parseResult.GetValue(allOption);
+            var statisticsDir = parseResult.GetValue(statisticsDirOption)!;
+
+            if (!pullAll && statisticName is null)
+            {
+                Console.Error.WriteLine("Specify --statistic <name> or --all.");
+                return;
+            }
+
+            await PlayFabAuth.RequireEntityCredentialsAsync(titleId, secretKey);
+
+            if (pullAll)
+            {
+                List<StatisticDefinitionFile> definitions;
+                try
+                {
+                    definitions = await StatisticDefinitionStore.FetchAllFromPlayFabAsync();
+                }
+                catch (Exception ex)
+                {
+                    Console.Error.WriteLine(ex.Message);
+                    return;
+                }
+
+                if (definitions.Count == 0)
+                {
+                    Console.WriteLine("No statistic definitions found.");
+                    return;
+                }
+
+                foreach (var mapped in definitions)
+                {
+                    StatisticDefinitionStore.Save(mapped, statisticsDir);
+                    Console.WriteLine($"  Saved {mapped.Name}.yml");
+                }
+
+                Console.WriteLine($"{definitions.Count} statistic definition(s) pulled to '{statisticsDir}/'.");
+            }
+            else
+            {
+                GetStatisticDefinitionResponse response;
+                try
+                {
+                    response = await StatisticSeedService.GetDefinitionAsync(statisticName!);
+                }
+                catch (Exception ex)
+                {
+                    Console.Error.WriteLine($"Failed to get statistic '{statisticName}': {ex.Message}");
+                    return;
+                }
+
+                var mapped = StatisticDefinitionStore.MapFromPlayFab(response);
+                StatisticDefinitionStore.Save(mapped, statisticsDir);
+                Console.WriteLine($"Saved {mapped.Name}.yml to '{statisticsDir}/'.");
+            }
+        });
+
+        return command;
+    }
+
+    private static Command CreateNukeCommand(GlobalOptions globalOptions)
+    {
+        var command = new Command("nuke", "Delete ALL statistic definitions on the title. Irreversible.");
+
+        command.SetAction(async parseResult =>
+        {
+            var titleId = parseResult.GetValue(globalOptions.TitleId);
+            var secretKey = parseResult.GetValue(globalOptions.SecretKey);
+
+            await PlayFabAuth.RequireEntityCredentialsAsync(titleId, secretKey);
+
+            List<StatisticDefinitionFile> definitions;
+            try
+            {
+                definitions = await StatisticDefinitionStore.FetchAllFromPlayFabAsync();
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine(ex.Message);
+                return;
+            }
+
+            if (definitions.Count == 0)
+            {
+                Console.WriteLine("No statistic definitions to delete.");
+                return;
+            }
+
+            var total = definitions.Count;
+            var deleted = 0;
+            for (var i = 0; i < total; i++)
+            {
+                var name = definitions[i].Name;
+                Console.Write($"Deleting statistic {i + 1}/{total} ({name})...");
+
+                try
+                {
+                    await LinkedDefinitionDeleter.DeleteStatisticAsync(name);
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($" FAILED: {ex.Message}");
+                    continue;
+                }
+
+                Console.WriteLine(" done.");
+                deleted++;
+
+                if (total > 10)
+                    await Task.Delay(100);
+            }
+
+            Console.WriteLine($"{deleted}/{total} statistic definition(s) deleted.");
         });
 
         return command;

@@ -128,4 +128,55 @@ public class StatsCommandParsingTests
         Assert.Empty(result.Errors);
         Assert.Equal("GLOBAL", result.GetValue(_globalOptions.TitleId));
     }
+
+    [Fact]
+    public void StatsPull_ParsesStatisticOption()
+    {
+        var result = _rootCommand.Parse("stats pull --statistic PlayerScore");
+        Assert.Empty(result.Errors);
+    }
+
+    [Fact]
+    public void StatsPull_ParsesAllOption()
+    {
+        var result = _rootCommand.Parse("stats pull --all");
+        Assert.Empty(result.Errors);
+    }
+
+    [Fact]
+    public void StatsPull_ParsesStatisticsDirOption()
+    {
+        var result = _rootCommand.Parse("stats pull --all --statistics-dir custom/path");
+        Assert.Empty(result.Errors);
+    }
+
+    [Fact]
+    public void StatsPull_ParsesWithoutAnyOption()
+    {
+        var result = _rootCommand.Parse("stats pull");
+        Assert.Empty(result.Errors);
+    }
+
+    [Fact]
+    public void StatsPull_StatisticsDirPropagatesFromGroup()
+    {
+        var result = _rootCommand.Parse("stats --statistics-dir custom/path pull --all");
+        Assert.Empty(result.Errors);
+    }
+
+    [Fact]
+    public void StatsNuke_ParsesWithoutArgs()
+    {
+        var result = _rootCommand.Parse("stats nuke");
+        Assert.Empty(result.Errors);
+    }
+
+    [Fact]
+    public void StatsNuke_GlobalOptionsPropagated()
+    {
+        var result = _rootCommand.Parse("--title-id GLOBAL stats nuke");
+
+        Assert.Empty(result.Errors);
+        Assert.Equal("GLOBAL", result.GetValue(_globalOptions.TitleId));
+    }
 }

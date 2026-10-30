@@ -31,6 +31,7 @@ public static class MigrateCommands
         group.Add(CreateUpCommand(globalOptions, migrationsDirOption));
         group.Add(CreateDownCommand(globalOptions, migrationsDirOption));
         group.Add(CreateCreateCommand(migrationsDirOption));
+        group.Add(CreatePlanGroup(globalOptions, migrationsDirOption));
         return group;
     }
 
@@ -234,6 +235,272 @@ public static class MigrateCommands
             File.WriteAllText(filePath, yaml);
 
             Console.WriteLine($"Created: {filePath}");
+        });
+
+        return command;
+    }
+
+    private static Command CreatePlanGroup(GlobalOptions globalOptions, Option<string> migrationsDirOption)
+    {
+        var planGroup = new Command("plan", "Compare desired-state definitions against PlayFab and generate a migration");
+        planGroup.Add(CreatePlanStatisticsCommand(globalOptions, migrationsDirOption));
+        planGroup.Add(CreatePlanLeaderboardsCommand(globalOptions, migrationsDirOption));
+        return planGroup;
+    }
+
+    private static Command CreatePlanStatisticsCommand(GlobalOptions globalOptions, Option<string> migrationsDirOption)
+    {
+        var statisticsDirOption = new Option<string>("--statistics-dir")
+        {
+            Description = "Path to statistic definitions directory",
+            DefaultValueFactory = _ => "statistics",
+        };
+        var statisticNameOption = new Option<string?>("--statistic")
+        {
+            Description = "Reconcile only this statistic (by name). When omitted, reconciles all.",
+        };
+        var includeDeletesOption = new Option<bool>("--include-deletes")
+        {
+            Description = "Generate delete-statistic steps for statistics on PlayFab with no local definition",
+        };
+        var allowRecreateOption = new Option<bool>("--allow-recreate")
+        {
+            Description = "Generate delete+create steps for column mismatches (destructive: loses player data)",
+        };
+
+        var command = new Command("statistics", "Reconcile local statistic definition files against PlayFab");
+        command.Add(statisticsDirOption);
+        command.Add(statisticNameOption);
+        command.Add(includeDeletesOption);
+        command.Add(allowRecreateOption);
+
+        command.SetAction(async parseResult =>
+        {
+            var titleId = parseResult.GetValue(globalOptions.TitleId);
+            var secretKey = parseResult.GetValue(globalOptions.SecretKey);
+            var migrationsDir = parseResult.GetValue(migrationsDirOption)!;
+            var statisticsDir = parseResult.GetValue(statisticsDirOption)!;
+            var statisticName = parseResult.GetValue(statisticNameOption);
+            var includeDeletes = parseResult.GetValue(includeDeletesOption);
+            var allowRecreate = parseResult.GetValue(allowRecreateOption);
+
+            var localDefinitions = StatisticDefinitionStore.LoadAll(statisticsDir);
+
+            if (statisticName is not null)
+                localDefinitions = localDefinitions
+                    .Where(d => string.Equals(d.Name, statisticName, StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+
+            var validationErrors = new List<string>();
+            foreach (var def in localDefinitions)
+            {
+                var errors = StatisticDefinitionStore.Validate(def);
+                foreach (var error in errors)
+                    validationErrors.Add($"{def.Name}: {error}");
+            }
+
+            if (validationErrors.Count > 0)
+            {
+                Console.Error.WriteLine("Local definition validation failed:");
+                foreach (var error in validationErrors)
+                    Console.Error.WriteLine($"  {error}");
+                return;
+            }
+
+            await PlayFabAuth.RequireEntityCredentialsAsync(titleId, secretKey);
+
+            List<StatisticDefinitionFile> remoteDefinitions;
+            try
+            {
+                remoteDefinitions = await StatisticDefinitionStore.FetchAllFromPlayFabAsync();
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine(ex.Message);
+                return;
+            }
+
+            if (statisticName is not null)
+                remoteDefinitions = remoteDefinitions
+                    .Where(d => string.Equals(d.Name, statisticName, StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+
+            var options = new ReconcileOptions(includeDeletes, allowRecreate);
+            var result = StatisticReconciler.Reconcile(localDefinitions, remoteDefinitions, options);
+
+            var table = new SpectreTable()
+                .Title("Statistic Reconciliation")
+                .Border(TableBorder.Rounded);
+            table.AddColumn("Statistic");
+            table.AddColumn("Status");
+            table.AddColumn("Details");
+
+            foreach (var action in result.Actions)
+            {
+                var (status, details) = action.Kind switch
+                {
+                    ReconcileActionKind.Create => ("Create", "Local only — will create on PlayFab"),
+                    ReconcileActionKind.Delete => ("Delete", "PlayFab only — will delete from PlayFab"),
+                    ReconcileActionKind.Recreate => ("Recreate", "Column mismatch — will delete and recreate (destructive)"),
+                    ReconcileActionKind.Synced when action.Warning is not null => ("Warning", action.Warning),
+                    ReconcileActionKind.VersionConfigDrift => ("Warning", action.Warning ?? ""),
+                    _ => ("Synced", ""),
+                };
+
+                table.AddRow(
+                    Markup.Escape(action.StatisticName),
+                    Markup.Escape(status),
+                    Markup.Escape(details));
+            }
+
+            AnsiConsole.Write(table);
+
+            if (!result.HasChanges)
+            {
+                Console.WriteLine("No differences found.");
+                return;
+            }
+
+            var timestamp = DateTime.UtcNow.ToString("yyyyMMddHHmmss");
+            var filename = $"{timestamp}_plan_statistics.yml";
+            var filePath = Path.Combine(migrationsDir, filename);
+
+            Directory.CreateDirectory(migrationsDir);
+
+            var migration = MigrationGenerator.GenerateStatisticMigration(result, "Auto-generated from statistic definition reconciliation");
+            var yaml = YamlSerializer.Serialize(migration);
+            File.WriteAllText(filePath, yaml);
+
+            Console.WriteLine($"Generated migration: {filePath}");
+        });
+
+        return command;
+    }
+
+    private static Command CreatePlanLeaderboardsCommand(GlobalOptions globalOptions, Option<string> migrationsDirOption)
+    {
+        var leaderboardsDirOption = new Option<string>("--leaderboards-dir")
+        {
+            Description = "Path to leaderboard definitions directory",
+            DefaultValueFactory = _ => "leaderboards",
+        };
+        var leaderboardNameOption = new Option<string?>("--name")
+        {
+            Description = "Reconcile only this leaderboard (by name). When omitted, reconciles all.",
+        };
+        var includeDeletesOption = new Option<bool>("--include-deletes")
+        {
+            Description = "Generate delete-leaderboard steps for leaderboards on PlayFab with no local definition",
+        };
+        var allowRecreateOption = new Option<bool>("--allow-recreate")
+        {
+            Description = "Generate delete+create steps for column mismatches (destructive: loses data)",
+        };
+
+        var command = new Command("leaderboards", "Reconcile local leaderboard definition files against PlayFab");
+        command.Add(leaderboardsDirOption);
+        command.Add(leaderboardNameOption);
+        command.Add(includeDeletesOption);
+        command.Add(allowRecreateOption);
+
+        command.SetAction(async parseResult =>
+        {
+            var titleId = parseResult.GetValue(globalOptions.TitleId);
+            var secretKey = parseResult.GetValue(globalOptions.SecretKey);
+            var migrationsDir = parseResult.GetValue(migrationsDirOption)!;
+            var leaderboardsDir = parseResult.GetValue(leaderboardsDirOption)!;
+            var leaderboardName = parseResult.GetValue(leaderboardNameOption);
+            var includeDeletes = parseResult.GetValue(includeDeletesOption);
+            var allowRecreate = parseResult.GetValue(allowRecreateOption);
+
+            var localDefinitions = LeaderboardDefinitionStore.LoadAll(leaderboardsDir);
+
+            if (leaderboardName is not null)
+                localDefinitions = localDefinitions
+                    .Where(d => string.Equals(d.Name, leaderboardName, StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+
+            var validationErrors = new List<string>();
+            foreach (var def in localDefinitions)
+            {
+                var errors = LeaderboardDefinitionStore.Validate(def);
+                foreach (var error in errors)
+                    validationErrors.Add($"{def.Name}: {error}");
+            }
+
+            if (validationErrors.Count > 0)
+            {
+                Console.Error.WriteLine("Local definition validation failed:");
+                foreach (var error in validationErrors)
+                    Console.Error.WriteLine($"  {error}");
+                return;
+            }
+
+            await PlayFabAuth.RequireEntityCredentialsAsync(titleId, secretKey);
+
+            List<LeaderboardDefinitionFile> remoteDefinitions;
+            try
+            {
+                remoteDefinitions = await LeaderboardDefinitionStore.FetchAllFromPlayFabAsync();
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine(ex.Message);
+                return;
+            }
+
+            if (leaderboardName is not null)
+                remoteDefinitions = remoteDefinitions
+                    .Where(d => string.Equals(d.Name, leaderboardName, StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+
+            var options = new ReconcileOptions(includeDeletes, allowRecreate);
+            var result = LeaderboardReconciler.Reconcile(localDefinitions, remoteDefinitions, options);
+
+            var table = new SpectreTable()
+                .Title("Leaderboard Reconciliation")
+                .Border(TableBorder.Rounded);
+            table.AddColumn("Leaderboard");
+            table.AddColumn("Status");
+            table.AddColumn("Details");
+
+            foreach (var action in result.Actions)
+            {
+                var (status, details) = action.Kind switch
+                {
+                    ReconcileActionKind.Create => ("Create", "Local only — will create on PlayFab"),
+                    ReconcileActionKind.Delete => ("Delete", "PlayFab only — will delete from PlayFab"),
+                    ReconcileActionKind.Recreate => ("Recreate", "Column mismatch — will delete and recreate (destructive)"),
+                    ReconcileActionKind.Synced when action.Warning is not null => ("Warning", action.Warning),
+                    ReconcileActionKind.VersionConfigDrift => ("Warning", action.Warning ?? ""),
+                    _ => ("Synced", ""),
+                };
+
+                table.AddRow(
+                    Markup.Escape(action.LeaderboardName),
+                    Markup.Escape(status),
+                    Markup.Escape(details));
+            }
+
+            AnsiConsole.Write(table);
+
+            if (!result.HasChanges)
+            {
+                Console.WriteLine("No differences found.");
+                return;
+            }
+
+            var timestamp = DateTime.UtcNow.ToString("yyyyMMddHHmmss");
+            var filename = $"{timestamp}_plan_leaderboards.yml";
+            var filePath = Path.Combine(migrationsDir, filename);
+
+            Directory.CreateDirectory(migrationsDir);
+
+            var migration = MigrationGenerator.GenerateLeaderboardMigration(result, "Auto-generated from leaderboard definition reconciliation");
+            var yaml = YamlSerializer.Serialize(migration);
+            File.WriteAllText(filePath, yaml);
+
+            Console.WriteLine($"Generated migration: {filePath}");
         });
 
         return command;

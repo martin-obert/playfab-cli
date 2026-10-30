@@ -16,6 +16,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="PlayFab.Cli.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="System.CommandLine" Version="2.0.*" />
     <PackageReference Include="PlayFabAllSDK" Version="1.*" />
     <PackageReference Include="Spectre.Console" Version="0.*" />
