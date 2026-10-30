@@ -1,4 +1,5 @@
 using System.CommandLine;
+using PlayFab.Cli.Commands.Codegen;
 using PlayFab.Cli.Commands.Config;
 using PlayFab.Cli.Commands.Leaderboard;
 using PlayFab.Cli.Commands.Migrate;
@@ -36,6 +37,7 @@ rootCommand.Add(MigrateCommands.CreateGroup(globalOptions));
 rootCommand.Add(PlayersCommands.CreateGroup(globalOptions));
 rootCommand.Add(StatsCommands.CreateGroup(globalOptions));
 rootCommand.Add(LeaderboardCommands.CreateGroup(globalOptions));
+rootCommand.Add(CodegenCommands.CreateGroup(globalOptions));
 
 var parseResult = rootCommand.Parse(args);
 return await parseResult.InvokeAsync();

@@ -87,6 +87,8 @@ public static class LeaderboardReconciler
         if (a.Columns.Count != b.Columns.Count)
             return false;
 
+        // Column.Type is intentionally not compared here (same as StatisticReconciler): it's a local-only
+        // code-generation annotation PlayFab never returns, so it can never actually drift against the remote.
         for (var i = 0; i < a.Columns.Count; i++)
         {
             if (!string.Equals(a.Columns[i].Name, b.Columns[i].Name, StringComparison.OrdinalIgnoreCase))

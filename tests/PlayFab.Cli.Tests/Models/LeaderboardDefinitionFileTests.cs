@@ -134,4 +134,61 @@ public class LeaderboardDefinitionFileTests
         Assert.DoesNotContain("linkedStatistic", yaml);
         Assert.DoesNotContain("linkedStatisticColumn", yaml);
     }
+
+    [Fact]
+    public void Type_OmittedByDefault_IsNull()
+    {
+        var def = new LeaderboardDefinitionFile
+        {
+            Name = "Test",
+            Columns = [new LeaderboardColumnDefinition { Name = "Score", SortDirection = "Descending" }],
+        };
+
+        Assert.Null(def.Columns[0].Type);
+    }
+
+    [Fact]
+    public void Deserialize_ExplicitType_IsMapped()
+    {
+        var yaml = """
+            name: TopScores
+            columns:
+              - name: Score
+                sortDirection: Descending
+                type: int32
+            """;
+
+        var def = Deserializer.Deserialize<LeaderboardDefinitionFile>(yaml);
+
+        Assert.Equal("int32", def.Columns[0].Type);
+    }
+
+    [Fact]
+    public void Serialize_OmitsNullType()
+    {
+        var def = new LeaderboardDefinitionFile
+        {
+            Name = "Test",
+            Columns = [new LeaderboardColumnDefinition { Name = "Score", SortDirection = "Descending" }],
+        };
+
+        var yaml = Serializer.Serialize(def);
+
+        Assert.DoesNotContain("type:", yaml);
+    }
+
+    [Fact]
+    public void Roundtrip_PreservesExplicitType()
+    {
+        var original = new LeaderboardDefinitionFile
+        {
+            Name = "Test",
+            Columns = [new LeaderboardColumnDefinition { Name = "Score", SortDirection = "Descending", Type = "float32" }],
+        };
+
+        var yaml = Serializer.Serialize(original);
+        var deserialized = Deserializer.Deserialize<LeaderboardDefinitionFile>(yaml);
+
+        Assert.Equal("float32", deserialized.Columns[0].Type);
+    }
 }

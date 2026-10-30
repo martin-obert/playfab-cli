@@ -267,6 +267,48 @@ public class LeaderboardDefinitionStoreTests : IDisposable
         Assert.Contains(errors, e => e.Contains("maxQueryableVersions"));
     }
 
+    [Fact]
+    public void Validate_NullType_NoError()
+    {
+        var def = new LeaderboardDefinitionFile
+        {
+            Name = "Test",
+            Columns = [new LeaderboardColumnDefinition { Name = "V", SortDirection = "Descending" }],
+        };
+
+        Assert.Empty(LeaderboardDefinitionStore.Validate(def));
+    }
+
+    [Theory]
+    [InlineData("string")]
+    [InlineData("number")]
+    [InlineData("bool")]
+    [InlineData("int32")]
+    [InlineData("float32")]
+    public void Validate_ValidExplicitTypes_NoError(string type)
+    {
+        var def = new LeaderboardDefinitionFile
+        {
+            Name = "Test",
+            Columns = [new LeaderboardColumnDefinition { Name = "V", SortDirection = "Descending", Type = type }],
+        };
+
+        Assert.Empty(LeaderboardDefinitionStore.Validate(def));
+    }
+
+    [Fact]
+    public void Validate_InvalidType_Error()
+    {
+        var def = new LeaderboardDefinitionFile
+        {
+            Name = "Test",
+            Columns = [new LeaderboardColumnDefinition { Name = "V", SortDirection = "Descending", Type = "float" }],
+        };
+
+        var errors = LeaderboardDefinitionStore.Validate(def);
+        Assert.Contains(errors, e => e.Contains("invalid type"));
+    }
+
     // --- helpers ---
 
     private string WriteYaml(string filename, string content)

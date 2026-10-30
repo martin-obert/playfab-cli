@@ -87,6 +87,9 @@ public static class LeaderboardDefinitionStore
                 if (!ValidationConstants.ValidSortDirections.Contains(col.SortDirection))
                     errors.Add($"columns[{i}] has invalid sortDirection '{col.SortDirection}'.");
 
+                if (col.Type is not null && !ValidationConstants.ValidColumnTypes.Contains(col.Type))
+                    errors.Add($"columns[{i}] has invalid type '{col.Type}'.");
+
                 var hasLinkedStat = col.LinkedStatistic is not null;
                 var hasLinkedCol = col.LinkedStatisticColumn is not null;
                 if (hasLinkedStat != hasLinkedCol)

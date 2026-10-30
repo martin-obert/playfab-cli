@@ -154,10 +154,20 @@ maxQueryableVersions: 3
 columns:
   - name: Value
     aggregationMethod: Sum
-    type: number             # string (default) | number | bool
+    type: int32               # see type vocabulary below; defaults to string when omitted
 ```
 
-Only desired-state fields are stored. Runtime metadata (version, created, lastResetTime, linkedLeaderboardNames) is excluded — it belongs to PlayFab and would drift. The `type` field on columns is a local semantic annotation (PlayFab doesn't have a column type concept); it defaults to `string` when omitted.
+Only desired-state fields are stored. Runtime metadata (version, created, lastResetTime, linkedLeaderboardNames) is excluded — it belongs to PlayFab and would drift. The `type` field on columns is a local semantic annotation (PlayFab doesn't have a column type concept — statistic/leaderboard values are always transmitted as `List<string>` at the API level, regardless of this field); it defaults to `string` when omitted, is excluded from reconciler drift comparison, and drives `playfab codegen` (see below). Valid values, and the C# type each maps to (`Models/ValidationConstants.cs`, `CSharpTypeByColumnType`):
+
+| `type` | C# type | | `type` | C# type |
+|---|---|---|---|---|
+| `string` | `string` | | `uint8` | `byte` |
+| `bool` | `bool` | | `uint16` | `ushort` |
+| `number` (legacy alias for `float32`) | `float` | | `uint32` | `uint` |
+| `int8` | `sbyte` | | `uint64` | `ulong` |
+| `int16` | `short` | | `float32` | `float` |
+| `int32` | `int` | | `float64` | `double` |
+| `int64` | `long` | | | |
 
 **`playfab stats pull --statistic <name> [--statistics-dir <path>]`** fetches a single statistic definition from PlayFab via `GetStatisticDefinitionAsync` and writes it as a YAML file. **`playfab stats pull --all [--statistics-dir <path>]`** fetches all statistics via `ListStatisticDefinitionsAsync` (paginated). `--statistics-dir` defaults to `statistics/`. Overwrites existing files (pull is always a fresh snapshot).
 
@@ -194,9 +204,12 @@ columns:
     linkedStatisticColumn: Value
   - name: Rank
     sortDirection: Ascending
+    type: int32                           # optional — see below
 ```
 
 Only desired-state fields are stored. Runtime metadata (version, created, lastResetTime) is excluded. Column `linkedStatistic`/`linkedStatisticColumn` must both be set or both omitted — the loader validates pairing but not that the referenced statistic exists (PlayFab rejects bad references at `migrate up`).
+
+Like statistics, a leaderboard column has an optional local `type` annotation (same vocabulary and C# mapping as statistics, see above) used only by `playfab codegen` — never by PlayFab itself, and excluded from reconciler drift comparison. Unlike statistics, it has **no eager default**: when omitted, `playfab codegen` resolves it at generation time — if the column is linked (`linkedStatistic`/`linkedStatisticColumn` both set), it inherits that statistic's column type automatically (PlayFab keeps a linked column's values in sync with the statistic, so the C# type should track it too); otherwise it falls back to `string`. An explicit `type` on the leaderboard column always overrides the inferred one.
 
 **`playfab leaderboard pull --name <name> [--leaderboards-dir <path>]`** fetches a single leaderboard definition from PlayFab via `GetLeaderboardDefinitionAsync` and writes it as a YAML file. **`playfab leaderboard pull --all [--leaderboards-dir <path>]`** fetches all leaderboards via `ListLeaderboardDefinitionsAsync` (paginated). `--leaderboards-dir` defaults to `leaderboards/`. Overwrites existing files (pull is always a fresh snapshot).
 
@@ -219,6 +232,37 @@ Only desired-state fields are stored. Runtime metadata (version, created, lastRe
 
 `playfab leaderboard nuke` deletes **every** leaderboard definition on the title — same pattern as `stats nuke`: fetches all definitions via `LeaderboardDefinitionStore.FetchAllFromPlayFabAsync`, calls `DeleteLeaderboardDefinitionAsync` for each, continues past individual failures, reports a final `deleted/total` count. Irreversible and unscoped. If clearing both and a statistic's delete fails because a leaderboard still links to it, run `leaderboard nuke` first.
 
+### Code Generation (`playfab codegen`)
+
+Generates strongly-typed C# classes from the local `statistics/`/`leaderboards/` desired-state definition files — purely local, no PlayFab calls. For a statistic/leaderboard consumer (e.g. a Unity client calling `GetStatisticsAsync`/`GetLeaderboardAsync`), this replaces hand-written POCOs and manual string parsing with generated, compile-time-checked types.
+
+- `playfab codegen statistics [--statistics-dir statistics] [--output-dir generated] [--namespace PlayFab.Generated] [--name <name>]` — one `.cs` file per statistic, written to `{output-dir}/Statistics/`.
+- `playfab codegen leaderboards [--leaderboards-dir leaderboards] [--statistics-dir statistics] [--output-dir generated] [--namespace PlayFab.Generated] [--name <name>]` — one `.cs` file per leaderboard, written to `{output-dir}/Leaderboards/`. Always loads statistics too (unfiltered, even when `--name` narrows the leaderboards), needed to resolve linked-column types.
+- `playfab codegen all [same dir/output/namespace options]` — runs both against the same output dir/namespace.
+- All three validate every definition first (`StatisticDefinitionStore.Validate`/`LeaderboardDefinitionStore.Validate`) and abort with the printed errors if any definition is invalid — nothing is written on a partial failure.
+- `--output-dir` defaults to `generated/` (sibling to `statistics/`/`leaderboards/`/`migrations/`, **not** under `src/PlayFab.Cli`) but is meant to be pointed straight at a consuming project (e.g. a Unity project's `Assets/Scripts/Generated`).
+
+**Generated class shape** (e.g. for a statistic `PlayerScore` with an `int32` column `Value`):
+
+```csharp
+public sealed class PlayerScoreStatistic
+{
+    public const string Name = "PlayerScore";
+    public int Value { get; set; }
+
+    public static PlayerScoreStatistic FromScores(IReadOnlyList<string> scores) =>
+        new() { Value = int.Parse(scores[0], CultureInfo.InvariantCulture) };
+
+    public List<string> ToScores() => [Value.ToString(CultureInfo.InvariantCulture)];
+}
+```
+
+A leaderboard entry class additionally gets plain `Rank`/`EntityId`/`DisplayName` properties (set independently by the caller — they come from the ranking entry, not the `Scores` list) ahead of the per-column properties. `FromScores`/`ToScores` always index by column position, matching PlayFab's positional `Scores` list — reordering columns in the YAML changes the generated indices. Parsing/formatting always use `CultureInfo.InvariantCulture` to avoid locale bugs (e.g. comma vs. dot decimal separator) on client devices. Generated files have **no PlayFab SDK dependency** — just `List<string>` in/out — so they drop into any consumer, including a Unity project using a different PlayFab SDK package than this CLI's `PlayFabAllSDK`.
+
+**Key classes:**
+- `CodeGenerator` (`Infrastructure/CodeGenerator.cs`) — pure logic, no I/O: `BuildStatisticClassSpec`/`BuildLeaderboardClassSpec` turn a definition into a `GeneratedClassSpec` (class/property names already sanitized to valid C# identifiers via `SanitizeIdentifier`, types already resolved via `ResolveCSharpType`/link inheritance); `Render` turns a spec into C# source text.
+- `CodegenCommands` (`Commands/Codegen/CodegenCommands.cs`) — the `statistics`/`leaderboards`/`all` subcommands: load + validate + generate + write `.cs` files.
+
 ### Credential Resolution (`CredentialResolver`)
 
 Priority: CLI args → env vars (`PLAYFAB_TITLE_ID`, `PLAYFAB_SECRET_KEY`) → config file (`~/.playfab/config.json`).
@@ -238,4 +282,4 @@ Priority: CLI args → env vars (`PLAYFAB_TITLE_ID`, `PLAYFAB_SECRET_KEY`) → c
 
 ## Testing
 
-Tests use xunit and mirror the src folder structure (`Commands/`, `Infrastructure/`, `Models/`). Environment variable tests use `[Collection("Environment")]` for sequential execution. `CliConfig` tests use temp directories. `CredentialResolver` tests pass explicit `CliConfig` instances. `MigrationLoader` tests use temp directories with YAML files. `StatisticDefinitionStore` and `LeaderboardDefinitionStore` tests use temp directories and cover load/save/validate/map logic. `StatisticReconciler` and `LeaderboardReconciler` tests cover all reconciliation scenarios (create/delete/recreate/synced/drift, flag gating, case insensitivity). `MigrationGenerator` tests cover both statistic and leaderboard migration generation. Runner, LedgerService, and the live-API parts of `SyntheticPlayerService`/`StatisticSeedService` are not unit-tested (they make PlayFab API calls) — only their pure logic (e.g. `StatisticSeedService.ParseColumnSpec`/`ValidateColumns`/`MergeScores`) is.
+Tests use xunit and mirror the src folder structure (`Commands/`, `Infrastructure/`, `Models/`). Environment variable tests use `[Collection("Environment")]` for sequential execution. `CliConfig` tests use temp directories. `CredentialResolver` tests pass explicit `CliConfig` instances. `MigrationLoader` tests use temp directories with YAML files. `StatisticDefinitionStore` and `LeaderboardDefinitionStore` tests use temp directories and cover load/save/validate/map logic. `StatisticReconciler` and `LeaderboardReconciler` tests cover all reconciliation scenarios (create/delete/recreate/synced/drift, flag gating, case insensitivity). `MigrationGenerator` tests cover both statistic and leaderboard migration generation. `CodeGenerator` tests cover class-spec building (type resolution including link inheritance/override/fallback, identifier sanitization, column order preservation) and rendered-source assertions, all pure/no I/O. Runner, LedgerService, and the live-API parts of `SyntheticPlayerService`/`StatisticSeedService` are not unit-tested (they make PlayFab API calls) — only their pure logic (e.g. `StatisticSeedService.ParseColumnSpec`/`ValidateColumns`/`MergeScores`) is.

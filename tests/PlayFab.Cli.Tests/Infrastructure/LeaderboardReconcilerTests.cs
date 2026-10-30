@@ -348,6 +348,15 @@ public class LeaderboardReconcilerTests
     }
 
     [Fact]
+    public void DefinitionsMatch_IgnoresType_True()
+    {
+        var a = new LeaderboardDefinitionFile { Name = "B", Columns = [new LeaderboardColumnDefinition { Name = "V", SortDirection = "Descending", Type = "int32" }] };
+        var b = new LeaderboardDefinitionFile { Name = "B", Columns = [new LeaderboardColumnDefinition { Name = "V", SortDirection = "Descending", Type = "string" }] };
+
+        Assert.True(LeaderboardReconciler.DefinitionsMatch(a, b));
+    }
+
+    [Fact]
     public void DefinitionsMatch_LinkedStatisticDifference_False()
     {
         var a = new LeaderboardDefinitionFile

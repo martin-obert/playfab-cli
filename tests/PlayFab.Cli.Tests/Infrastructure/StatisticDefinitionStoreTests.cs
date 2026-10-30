@@ -418,6 +418,16 @@ public class StatisticDefinitionStoreTests : IDisposable
     [InlineData("string")]
     [InlineData("number")]
     [InlineData("bool")]
+    [InlineData("int8")]
+    [InlineData("int16")]
+    [InlineData("int32")]
+    [InlineData("int64")]
+    [InlineData("uint8")]
+    [InlineData("uint16")]
+    [InlineData("uint32")]
+    [InlineData("uint64")]
+    [InlineData("float32")]
+    [InlineData("float64")]
     public void Validate_AllValidColumnTypes_NoErrors(string type)
     {
         var definition = new StatisticDefinitionFile
