@@ -6,9 +6,16 @@ public static class PlayFabRetry
 {
     private const int MaxAttempts = 5;
 
+    private static readonly HashSet<PlayFabErrorCode> NonRetryableErrors =
+    [
+        PlayFabErrorCode.StatisticCountLimitExceeded,
+        PlayFabErrorCode.LeaderboardCountLimitExceeded,
+    ];
+
     /// <summary>
     /// Retries a PlayFab call when throttled (PlayFabErrorCode.APIClientRequestRateLimitExceeded),
     /// waiting PlayFabError.RetryAfterSeconds (the server-specified cooldown) instead of guessing a delay.
+    /// Hard-limit errors (StatisticCountLimitExceeded, LeaderboardCountLimitExceeded) are never retried.
     /// </summary>
     public static async Task<PlayFabResult<TResult>> ExecuteWithThrottleRetryAsync<TResult>(Func<Task<PlayFabResult<TResult>>> apiCall)
         where TResult : PlayFab.Internal.PlayFabResultCommon
@@ -20,7 +27,8 @@ public static class PlayFabRetry
             attempt++;
             var result = await apiCall();
 
-            if (result.Error is null || result.Error.Error != PlayFabErrorCode.APIClientRequestRateLimitExceeded || attempt >= MaxAttempts)
+            if (result.Error is null || result.Error.Error != PlayFabErrorCode.APIClientRequestRateLimitExceeded
+                || NonRetryableErrors.Contains(result.Error.Error) || attempt >= MaxAttempts)
                 return result;
 
             var delaySeconds = result.Error.RetryAfterSeconds ?? 1;

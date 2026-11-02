@@ -156,6 +156,11 @@ public static class MigrationRunner
             VersionConfiguration = BuildVersionConfiguration(step),
         }));
 
+        if (result.Error is not null && result.Error.Error == PlayFabErrorCode.StatisticCountLimitExceeded)
+            throw new InvalidOperationException(
+                $"Statistic definition limit reached — cannot create '{step.Name}'. "
+                + "Delete unused statistics or upgrade your PlayFab title tier before retrying.");
+
         // Idempotent: a retried `migrate up` after a partial failure will re-attempt already-created
         // definitions. Treat "already exists" as success so it can resume instead of failing on step 1.
         if (result.Error is not null && result.Error.Error != PlayFabErrorCode.DuplicateStatisticName)
@@ -207,6 +212,11 @@ public static class MigrationRunner
             SizeLimit = step.SizeLimit ?? 1000,
             VersionConfiguration = BuildVersionConfiguration(step),
         }));
+
+        if (result.Error is not null && result.Error.Error == PlayFabErrorCode.LeaderboardCountLimitExceeded)
+            throw new InvalidOperationException(
+                $"Leaderboard definition limit reached — cannot create '{step.Name}'. "
+                + "Delete unused leaderboards or upgrade your PlayFab title tier before retrying.");
 
         // Idempotent for the same reason as CreateStatisticDefinitionAsync above.
         if (result.Error is not null && result.Error.Error != PlayFabErrorCode.LeaderboardNameConflict)
